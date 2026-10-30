@@ -1,0 +1,120 @@
+/* Design tokens. Owned by the main session: agents read these, never edit them.
+   Brand: Prestige Corporate Events. Deep ink navy, warm cream, champagne gold. */
+
+:root {
+  /* Ink (dark surfaces, text on light) */
+  --ink-950: #040A13;
+  --ink-900: #07111F;
+  --ink-850: #0B1727;
+  --ink-800: #0F1D30;
+  --ink-700: #182A42;
+  --ink-600: #253852;
+  --ink-500: #3A4D68;
+
+  /* Cream (light surfaces) */
+  --cream-0: #FFFFFF;
+  --cream-50: #FBF9F5;
+  --cream-100: #F5F0E7;
+  --cream-200: #ECE3D3;
+  --cream-300: #DDD0B9;
+
+  /* Gold */
+  --gold-800: #6E4F1F;
+  --gold-700: #8A6426;   /* gold text on cream/white, 5:1 or better */
+  --gold-600: #B08040;
+  --gold-500: #C79A55;   /* fills, icons, rules */
+  --gold-400: #D8AE68;   /* gold text on ink, strong contrast */
+  --gold-300: #E8D6B3;
+  --gold-200: #F3E8D2;
+  --gold-gradient: linear-gradient(135deg, #B88A44 0%, #D4A65A 30%, #E8D6B3 55%, #D4A65A 75%, #B88A44 100%);
+  --gold-gradient-soft: linear-gradient(135deg, rgba(212,166,90,.22), rgba(232,214,179,.08));
+
+  /* Text */
+  --text-strong: #0E1420;
+  --text: #283141;
+  --text-muted: #5E6673;
+  --text-on-ink: #F4EFE6;
+  --text-on-ink-muted: #A9B3C2;
+
+  /* Lines */
+  --line: #E6DDCC;
+  --line-strong: #D3C6AE;
+  --line-on-ink: rgba(232, 214, 179, .16);
+
+  /* Status */
+  --ok: #1E7A57;
+  --ok-bg: #E4F3EC;
+  --warn: #9A6412;
+  --warn-bg: #FBF0DC;
+  --bad: #9B2226;
+  --bad-bg: #F8E3E3;
+
+  /* Chart palette (validated categorical set, gold always carries a label) */
+  --chart-1: #C79A55;
+  --chart-2: #2D6FE0;
+  --chart-3: #B5202F;
+  --chart-4: #0E9384;
+  --chart-ink: #0F1D30;
+
+  /* Type */
+  --font-display: "League Spartan", system-ui, sans-serif;
+  --font-body: "Poppins", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --fs-xs: .75rem;
+  --fs-sm: .875rem;
+  --fs-md: 1rem;
+  --fs-lg: 1.125rem;
+  --fs-xl: clamp(1.25rem, 1.1rem + .6vw, 1.5rem);
+  --fs-2xl: clamp(1.6rem, 1.3rem + 1.2vw, 2.25rem);
+  --fs-3xl: clamp(2.1rem, 1.6rem + 2.2vw, 3.25rem);
+  --fs-hero: clamp(2.6rem, 1.8rem + 4vw, 5rem);
+  --lh-tight: 1.05;
+  --lh-snug: 1.25;
+  --lh-body: 1.6;
+  --tracking-caps: .14em;
+
+  /* Space (4px base) */
+  --s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px; --s-5: 20px;
+  --s-6: 24px; --s-7: 32px; --s-8: 40px; --s-9: 56px; --s-10: 72px;
+  --s-11: 96px; --s-12: 128px;
+  --gutter: clamp(16px, 4vw, 40px);
+  --container: 1240px;
+
+  /* Radii */
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 20px;
+  --r-xl: 28px;
+  --r-pill: 999px;
+
+  /* Elevation */
+  --shadow-1: 0 1px 2px rgba(14,20,32,.06), 0 2px 6px rgba(14,20,32,.04);
+  --shadow-2: 0 2px 4px rgba(14,20,32,.05), 0 8px 24px rgba(14,20,32,.08);
+  --shadow-3: 0 8px 16px rgba(14,20,32,.08), 0 24px 60px rgba(14,20,32,.14);
+  --shadow-gold: 0 10px 30px rgba(184,138,68,.35);
+  --glow-gold: 0 0 0 1px rgba(216,174,104,.35), 0 0 32px rgba(216,174,104,.18);
+  --focus-ring: 0 0 0 3px var(--cream-50), 0 0 0 5px var(--gold-600);
+
+  /* Motion */
+  --ease-out: cubic-bezier(.22, 1, .36, 1);
+  --ease-in-out: cubic-bezier(.65, 0, .35, 1);
+  --ease-spring: cubic-bezier(.34, 1.56, .64, 1);
+  --dur-1: 120ms;
+  --dur-2: 220ms;
+  --dur-3: 420ms;
+  --dur-4: 700ms;
+
+  /* Layers */
+  --z-header: 50;
+  --z-drawer: 80;
+  --z-modal: 90;
+  --z-toast: 100;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-1: 1ms;
+    --dur-2: 1ms;
+    --dur-3: 1ms;
+    --dur-4: 1ms;
+  }
+}

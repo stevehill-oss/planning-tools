@@ -1,0 +1,32 @@
+/* Print styles. Loaded with media="print".
+   Default print: the page without chrome. When app.js adds html.printing-brief
+   (from "Print or save as PDF" in My brief), only the brief prints. */
+
+@page { margin: 16mm; }
+
+body { background: #fff !important; color: #000; font-size: 11pt; }
+.site-header, .tabbar, .toasts, .menu-btn, .skip-link, dialog, .newsletter, .cta-band__actions .btn,
+.hero__visual, .hero__ctas, .actions, .site-footer__nav { display: none !important; }
+.hero, .cta-band, .site-footer { background: #fff !important; color: #000 !important; }
+.hero *, .cta-band *, .site-footer * { color: #000 !important; }
+html.reveal-ready [data-reveal] { opacity: 1 !important; transform: none !important; }
+a { color: #000; }
+
+/* Brief-only print */
+html.printing-brief body > *:not(.print-brief) { display: none !important; }
+html.printing-brief .print-brief { display: block !important; }
+
+.print-brief { font-family: var(--font-body); color: #000; }
+.print-brief__head { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #8A6426; padding-bottom: 8mm; margin-bottom: 8mm; }
+.print-brief__head img { width: 52mm; height: auto; }
+.print-brief__head p { margin: 0; font-size: 9pt; color: #444; text-align: right; }
+.print-brief h1 { font-size: 22pt; margin: 0 0 6mm; color: #000; }
+.print-brief__item { break-inside: avoid; display: grid; grid-template-columns: 34mm 1fr; gap: 6mm; padding: 5mm 0; border-bottom: 1px solid #ddd; }
+.print-brief__item.no-thumb { grid-template-columns: 1fr; }
+.print-brief__item img { width: 34mm; height: auto; border-radius: 2mm; }
+.print-brief__tool { font-size: 8pt; letter-spacing: .1em; text-transform: uppercase; color: #8A6426; margin: 0; font-weight: 600; }
+.print-brief__item h2 { font-size: 13pt; margin: 1mm 0; color: #000; }
+.print-brief__item p { margin: 0 0 2mm; font-size: 10pt; }
+.print-brief__item ul { margin: 0; padding-left: 4mm; font-size: 10pt; }
+.print-brief__link { font-size: 8pt; color: #555; word-break: break-all; }
+.print-brief__foot { margin-top: 10mm; font-size: 9pt; color: #444; }
