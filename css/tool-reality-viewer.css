@@ -194,6 +194,56 @@
 .rv__stage.is-fullscreen .rv__viewport { flex: 1; aspect-ratio: auto; max-height: none; }
 .rv__stage.is-fullscreen .rv__canvas-host canvas { touch-action: none; }
 
+/* ---------- Real 360 photo (is-photo) ---------- */
+.rv__pano-host { position: absolute; inset: 0; z-index: 1; visibility: hidden; }
+.rv__stage.is-photo .rv__pano-host { visibility: visible; }
+.rv__pano-host canvas { display: block; width: 100%; height: 100%; touch-action: pan-y; cursor: grab; outline: none; }
+.rv__pano-host canvas:active { cursor: grabbing; }
+.rv__pano-host canvas:focus-visible { box-shadow: inset 0 0 0 3px var(--gold-400); }
+.rv__stage.is-fullscreen .rv__pano-host canvas { touch-action: none; }
+.rv__stage.is-photo .rv__loading, .rv__stage.is-photo .rv__split, .rv__stage.is-photo .rv__markers { display: none; }
+/* Lighting, crowd and the wave belong to the 3D model, so they rest while the photo shows. */
+.rv__stage.is-photo .rv__light-slot, .rv__stage.is-photo .rv__crowd-slot, .rv__stage.is-photo .rv__wave { display: none; }
+.rv.is-photo-on .rv__seatbar .field { display: none; }
+.rv__src-slot[hidden] { display: none; }
+
+.rv__cap-body { display: block; }
+.rv__soon { display: block; margin-top: 2px; color: var(--text-on-ink-muted); }
+.rv__soon[hidden] { display: none; }
+
+/* ---------- Real venue: the live Google 3D map (is-real) ---------- */
+.rv__real { position: absolute; inset: 0; z-index: 5; background: var(--ink-950); }
+.rv__real[hidden] { display: none; }
+.rv__real-map { position: absolute; inset: 0; }
+.rv__real-map .rv__gmap { display: block; width: 100%; height: 100%; }
+.rv__real-loading {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 2;
+  display: none; align-items: center; gap: var(--s-3); padding: 12px 18px; border-radius: var(--r-pill);
+  background: rgba(4,10,19,.72); border: 1px solid var(--line-on-ink); backdrop-filter: blur(8px);
+  font-size: var(--fs-sm); color: var(--text-on-ink);
+}
+.rv__real[data-state="loading"] .rv__real-loading { display: inline-flex; }
+.rv__real-empty { position: absolute; inset: 0; z-index: 3; display: none; place-items: center; padding: 64px var(--s-5) var(--s-5); }
+.rv__real[data-state="nokey"] .rv__real-empty, .rv__real[data-state="error"] .rv__real-empty { display: grid; }
+.rv__real[data-state="nokey"], .rv__real[data-state="error"] {
+  background:
+    radial-gradient(90% 70% at 50% 35%, rgba(216,174,104,.10) 0%, rgba(7,17,31,0) 60%),
+    repeating-linear-gradient(0deg, rgba(232,214,179,.05) 0 1px, transparent 1px 44px),
+    repeating-linear-gradient(90deg, rgba(232,214,179,.05) 0 1px, transparent 1px 44px),
+    var(--ink-950);
+}
+.rv__real-card .eyebrow { display: inline-flex; align-items: center; gap: 6px; color: var(--gold-400); }
+.rv__real-actions { display: flex; flex-wrap: wrap; gap: var(--s-2); margin-top: var(--s-4); }
+.rv__stage.is-real .rv__loading, .rv__stage.is-real .rv__corner, .rv__stage.is-real .rv__caption,
+.rv__stage.is-real .rv__split, .rv__stage.is-real .rv__markers, .rv__stage.is-real .rv__fade { display: none; }
+.rv__stage.is-real .rv__light-slot, .rv__stage.is-real .rv__crowd-slot, .rv__stage.is-real .rv__wave { display: none; }
+.rv__real-tools { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-2) var(--s-3); flex: 1 1 auto; min-width: 0; }
+.rv__real-tools[hidden] { display: none; }
+.rv__real-tools.is-off { display: none; }
+.rv__presets { display: flex; gap: 4px; flex-wrap: wrap; }
+.rv__orbit[aria-pressed="true"] { border-color: var(--gold-400); }
+.rv__real-note { margin: 0; flex: 1 1 260px; font-size: var(--fs-xs); line-height: 1.4; color: var(--text-on-ink-muted); }
+
 /* ---------- Under the stage: seat bar (row, position, compare) and the mini-map ---------- */
 .rv__below { display: grid; gap: var(--s-4); grid-template-columns: minmax(0, 1fr); align-items: start; }
 @media (min-width: 760px) { .rv__below { grid-template-columns: minmax(0, 1fr) minmax(240px, 300px); } }
@@ -281,4 +331,11 @@
   .rv__seatbar .rv__compare { width: 100%; justify-content: center; }
   .rv__marker-label { display: none; }
   .rv__marker { padding: 4px; }
+  /* Three view buttons fit at 390px once their icons step aside. */
+  .rv__toolbar--top .seg button .icon { display: none; }
+  .rv__stage.is-real .rv__toolbar--tools { flex-wrap: wrap; overflow: visible; }
+  .rv__stage.is-real .rv__real-tools { flex: 1 1 0; }
+  .rv__stage.is-real .rv__fs { margin-left: auto; }
+  .rv__real-empty { padding: 56px var(--s-3) var(--s-3); }
+  .rv__real-card { padding: var(--s-5); }
 }

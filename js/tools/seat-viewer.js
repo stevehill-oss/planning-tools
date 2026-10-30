@@ -12,11 +12,21 @@
 // Extending (part 2): archetypes without a layout in js/viewer/layouts.js show a designed
 // "model in preparation" state; adding a layout and an archetype builder is enough to
 // light them up here. Row labels per area live in ROW_LABELS below.
+//
+// Real imagery, layered on top of the 3D model (which always stays as the fallback):
+// - view=real: "Real venue", Google's photorealistic 3D map (js/viewer/real-venue.js),
+//   loaded only when first opened and only when js/config.js has a key. Without a key, or
+//   when Google refuses or fails, a calm card shows instead.
+// - Real 360 photos (js/viewer/panorama.js): when js/data/panoramas.js has an entry for the
+//   venue and area, the seat view opens on the photo, with a toggle back to the model
+//   (src=model in the hash) and a "Photo: <credit>, <date>" credit line.
 
 import { segmented, meterRow, actionBar, el, icon } from '../ui.js';
 import { html, raw, reducedMotion } from '../core.js';
 import { VENUES, MODES, AREAS, venueById, areaName, SCORE_LABELS } from '../data/venues.js';
 import { seatSpec, plan, hasLayout, describeSeat, ROW_KEYS, POS_KEYS } from '../viewer/layouts.js';
+import { panoramaFor } from '../data/panoramas.js';
+import { GOOGLE_MAPS_KEY } from '../config.js';
 
 const ARCH_LABEL = { stadium: 'Stadium', arena: 'Arena', hall: 'Concert hall', racecourse: 'Racecourse' };
 const DEFAULT_AREA = { stadium: 'premium-lounge', arena: 'premium-lower', hall: 'stalls', racecourse: 'private-box' };
@@ -60,15 +70,20 @@ function hasWebGL() {
   } catch { return false; }
 }
 
+let webglOk = null;
+const webglReady = () => (webglOk === null ? (webglOk = hasWebGL()) : webglOk);
+
 const devMode = () => /viewerdev/.test(location.search) || /[?&]dev=1/.test(location.hash);
 
 export function mount(root, ctx) {
   /* ---------- State ---------- */
   const st = {
     venue: VENUES[0].id, area: null, mode: null, row: 'middle', pos: 'centre', light: null, view: 'seat',
-    compare: null, crowd: 'full',
+    compare: null, crowd: 'full', src: 'photo',
   };
   let engine = null; let enginePromise = null; let active = false; let built = ''; let firstFrame = false;
+  let pano = null; let panoPromise = null; let panoSrc = ''; let panoShown = false;
+  let real = null; let realPromise = null; let realVenue = '';
   let headingTimer = 0; let lastHeading = null; let split = 0.5;
   const venue = () => venueById(st.venue) || VENUES[0];
   const arch = () => venue().archetype;
@@ -111,6 +126,12 @@ export function mount(root, ctx) {
           <div class="rv__viewport">
             <div class="rv__poster" aria-hidden="true"><img alt="" width="1280" height="720" decoding="async" hidden></div>
             <div class="rv__canvas-host"></div>
+            <div class="rv__pano-host"></div>
+            <div class="rv__real" hidden data-state="idle">
+              <div class="rv__real-map"></div>
+              <div class="rv__real-loading" role="status" aria-live="polite"><span class="rv__spinner" aria-hidden="true"></span><span>Loading the live map</span></div>
+              <div class="rv__real-empty"></div>
+            </div>
             <div class="rv__markers" hidden></div>
             <div class="rv__fade" aria-hidden="true"></div>
             <div class="rv__loading" role="status" aria-live="polite"><span class="rv__spinner" aria-hidden="true"></span><span class="rv__loading-text">Preparing your view</span></div>
@@ -131,10 +152,20 @@ export function mount(root, ctx) {
               <p class="rv__split-label rv__split-label--b"><span class="badge">Standard ticket</span><span class="rv__split-name"></span></p>
               <div class="rv__divider" role="separator" tabindex="0" aria-valuemin="15" aria-valuemax="85" aria-valuenow="50" aria-label="Divider between the two views. Use the arrow keys to move it."><span class="rv__divider-grip" aria-hidden="true">${raw(icon('compare'))}</span></div>
             </div>
-            <p class="rv__caption">${raw(icon('info'))}<span>Illustrative model, not an exact venue rendering.</span><span class="rv__hint"> Drag to look around.</span></p>
+            <p class="rv__caption">${raw(icon('info'))}<span class="rv__cap-body"><span class="rv__cap-text">Illustrative model, not an exact venue rendering.</span><span class="rv__hint"> Drag to look around.</span><span class="rv__soon" hidden>Real 360 photo from this area coming soon.</span></span></p>
             <div class="rv__dev" hidden></div>
           </div>
           <div class="rv__toolbar rv__toolbar--tools" role="toolbar" aria-label="View settings">
+            <div class="rv__src-slot" hidden></div>
+            <div class="rv__real-tools" hidden>
+              <button type="button" class="btn btn--ghost-ink btn--sm rv__orbit" data-act="orbit" aria-pressed="false">${raw(icon('pause'))}<span>Pause the orbit</span></button>
+              <div class="rv__presets" role="group" aria-label="Camera angle">
+                <button type="button" class="btn btn--ghost-ink btn--sm" data-act="preset" data-preset="angled">Angled</button>
+                <button type="button" class="btn btn--ghost-ink btn--sm" data-act="preset" data-preset="above">From above</button>
+                <button type="button" class="btn btn--ghost-ink btn--sm" data-act="preset" data-preset="low">Closer</button>
+              </div>
+              <p class="rv__real-note">Live map imagery from Google. It shows the building, not your seat, and was not taken on an event day.</p>
+            </div>
             <div class="rv__light-slot"></div>
             <div class="rv__crowd-slot"></div>
             <button type="button" class="btn btn--ghost-ink btn--sm rv__wave" data-act="wave">${raw(icon('wave'))}<span>Start a wave</span></button>
@@ -169,6 +200,9 @@ export function mount(root, ctx) {
   const splitEl = $('.rv__split'); const divider = $('.rv__divider'); const diffEl = $('.rv__diff');
   const viewport = $('.rv__viewport');
   const sel = $('#rv-venue');
+  const panoHost = $('.rv__pano-host'); const realEl = $('.rv__real'); const realMap = $('.rv__real-map');
+  const realEmpty = $('.rv__real-empty'); const realTools = $('.rv__real-tools'); const orbitBtn = $('.rv__orbit');
+  const srcSlot = $('.rv__src-slot'); const capText = $('.rv__cap-text'); const soonEl = $('.rv__soon');
 
   // Venue select, grouped by archetype.
   const groups = {};
@@ -180,10 +214,18 @@ export function mount(root, ctx) {
 
   viewCtl = segmented({
     label: 'Camera', ink: true, value: st.view,
-    options: [{ value: 'seat', label: 'Seat view', icon: 'eye' }, { value: 'overview', label: 'Overview', icon: 'map' }],
-    onChange: (v) => { st.view = v; applyView(); sync(); },
+    options: [{ value: 'seat', label: 'Seat view', icon: 'eye' }, { value: 'overview', label: 'Overview', icon: 'map' }, { value: 'real', label: 'Real venue', icon: 'pin' }],
+    onChange: (v) => { if (v !== 'seat' && comparing()) closeCompare(); st.view = v; applyView(); sync(); },
   });
   $('.rv__view-slot').append(viewCtl.el);
+
+  // 360 photo or 3D model, shown only when the area has a real photo.
+  const srcCtl = segmented({
+    label: 'Show', ink: true, value: st.src,
+    options: [{ value: 'photo', label: '360 photo', icon: 'camera' }, { value: 'model', label: '3D model', icon: 'layers' }],
+    onChange: (v) => { st.src = v; paintPhoto(); sync(); },
+  });
+  srcSlot.append(srcCtl.el);
 
   crowdCtl = segmented({ label: 'Crowd', ink: true, value: st.crowd, options: CROWD.map((c) => ({ value: c.value, label: c.label })), onChange: (v) => { st.crowd = v; engine?.setDensity(CROWD.find((c) => c.value === v).d); sync(); } });
   crowdCtl.el.classList.add('rv__crowd');
@@ -271,7 +313,8 @@ export function mount(root, ctx) {
     hand.append(hb);
     const bar = actionBar({
       onBrief: () => {
-        const thumb = engine && firstFrame && hasLayout(arch()) ? engine.snapshot(360) : null;
+        // Never a picture of the live Google map (their terms forbid copying it).
+        const thumb = st.view === 'real' ? null : photoOn() ? pano.snapshot(360) : engine && firstFrame && hasLayout(arch()) ? engine.snapshot(360) : null;
         ctx.brief.add({ tool: 'reality-viewer', title: `${name}, ${v.name}`, subtitle: `${modeLabel()}, ${rowLabels()[st.row].toLowerCase()}, ${POS_LABEL[st.pos].toLowerCase()}`, lines: summaryLines(), params: params(), ...(thumb ? { thumb } : {}) });
       },
       onShare: () => ctx.share.send({ title: `${name} at ${v.name}`, text: `The view from ${name.toLowerCase()} at ${v.name} (illustrative)`, url: ctx.shareUrl(params()) }),
@@ -286,14 +329,16 @@ export function mount(root, ctx) {
     return [
       `Venue: ${venue().name}`, `Event: ${modeLabel()}`, `Area: ${areaName(a, st.mode)} (${a.kind === 'hospitality' ? 'hospitality' : 'standard ticket'})`,
       `Seat: ${rowLabels()[st.row]}, ${POS_LABEL[st.pos].toLowerCase()}`, `Typically included: ${a.inclusions.join(', ')}`,
-      'View shown is an illustrative model, not an exact venue rendering.',
+      photoOn() ? `View shown is a real 360 photo from this area (photo: ${photoEntry().credit}, ${photoEntry().takenOn}).` : 'View shown is an illustrative model, not an exact venue rendering.',
     ];
   }
 
   // Saves the current view as a PNG with a small branded caption strip underneath.
   function saveView() {
-    if (!engine || !firstFrame) return;
-    const shot = engine.snapshotCanvas(1600);
+    if (st.view === 'real') { ctx.toast('The live map cannot be saved as a picture. Switch to Seat view to save one.', { tone: 'info' }); return; }
+    const photo = photoOn() ? photoEntry() : null;
+    if (!photo && (!engine || !firstFrame)) return;
+    const shot = photo ? pano.snapshotCanvas(1600) : engine.snapshotCanvas(1600);
     if (!shot) { ctx.toast('Could not save the view on this device', { tone: 'warn' }); return; }
     const W = shot.width; const strip = Math.max(64, Math.round(W * 0.062));
     const c = document.createElement('canvas'); c.width = W; c.height = shot.height + strip;
@@ -310,9 +355,9 @@ export function mount(root, ctx) {
       ? `${venue().name}: ${areaName(a, st.mode)} ${splitWords().a}, ${areaName(cmpArea, st.mode)} ${splitWords().b}`
       : `${venue().name}: ${areaName(a, st.mode)}, ${rowLabels()[st.row].toLowerCase()}`;
     g.fillStyle = '#FFFFFF'; g.font = `500 ${Math.round(strip * 0.22)}px Poppins, Arial, sans-serif`;
-    g.fillText(where, pad, mid + strip * 0.2, W - pad * 2 - strip * 3.2);
+    g.fillText(where, pad, mid + strip * 0.2, W - pad * 2 - strip * (photo ? 7 : 3.2));
     g.textAlign = 'right'; g.fillStyle = 'rgba(232,214,179,0.85)'; g.font = `500 ${Math.round(strip * 0.22)}px Poppins, Arial, sans-serif`;
-    g.fillText('Illustrative view', W - pad, mid);
+    g.fillText(photo ? `Photo: ${photo.credit}, ${photo.takenOn}` : 'Illustrative view', W - pad, mid);
     const done = (blob) => {
       if (!blob) { ctx.toast('Could not save the view on this device', { tone: 'warn' }); return; }
       const url = URL.createObjectURL(blob);
@@ -411,7 +456,7 @@ export function mount(root, ctx) {
         lowPower: lowPowerDevice(),
         reducedMotion,
         onCamera: (h) => { lastHeading = h; paintYou(h); scheduleAria(); zoomLevelEl.textContent = `${Math.round(h.zoom * 10) / 10}x`; },
-        onFlyEnd: () => { st.view = 'seat'; viewCtl.set('seat'); markersEl.hidden = true; stage.classList.remove('is-overview'); updateAria(); sync(); },
+        onFlyEnd: () => { st.view = 'seat'; viewCtl.set('seat'); markersEl.hidden = true; stage.classList.remove('is-overview'); updateAria(); paintPhoto(); sync(); },
         onProject: (pts) => paintMarkers(pts),
         onFrame: devMode() ? (s) => { devEl.hidden = false; devEl.textContent = `frame ${s.cpuMs.toFixed(1)} ms cpu | ${Math.round(s.fps)} fps | ${s.calls} calls | ${(s.tris / 1e6).toFixed(2)}M tris | ${s.view}`; } : null,
         onLost: () => showFallback('webgl'),
@@ -449,12 +494,14 @@ export function mount(root, ctx) {
       buildMarkers();
       e.setSeat(seatSpec(arch(), st.mode, st.area, st.row, st.pos));
       if (st.view === 'overview') applyView(true);
-      e.setActive(active);
+      e.setActive(engineShouldRun());
       requestAnimationFrame(() => requestAnimationFrame(() => { firstFrame = true; setStageState('ready'); applyCompare(); updateAria(); }));
     } else {
-      e.setActive(active);
+      e.setActive(engineShouldRun());
     }
   }
+  // The 3D loop rests while the live map or a 360 photo covers it.
+  const engineShouldRun = () => active && st.view !== 'real' && !photoOn();
   const lift = ([x, y, z]) => [x, y + 2.2, z];
 
   function moveSeat({ fly = false } = {}) {
@@ -477,6 +524,8 @@ export function mount(root, ctx) {
 
   function selectArea(id, { fromUser = false } = {}) {
     if (!areas().some((a) => a.id === id)) return;
+    // Picking a seat from the live map takes you to that seat.
+    if (st.view === 'real') { st.view = 'seat'; viewCtl.set('seat'); applyView(); }
     const wasOverview = st.view === 'overview';
     // Choosing the compared area itself ends the split screen.
     if (st.compare && id === st.compare) { st.compare = null; engine?.setCompare(null); }
@@ -488,15 +537,148 @@ export function mount(root, ctx) {
     renderMap();
     if (wasOverview && (reducedMotion() || !engine)) { st.view = 'seat'; viewCtl.set('seat'); applyView(); }
     paintCompare();
+    paintPhoto();
   }
 
   function applyView(force) {
+    const isReal = st.view === 'real';
+    stage.classList.toggle('is-real', isReal);
+    if (isReal) {
+      markersEl.hidden = true; stage.classList.remove('is-overview');
+      engine?.setActive(false);
+      enterReal();
+      paintPhoto();
+      return;
+    }
+    leaveReal();
+    paintPhoto();
     if (!engine || !firstFrame && !force) return;
     engine.setView(st.view);
+    engine.setActive(engineShouldRun());
     const ov = st.view === 'overview';
     markersEl.hidden = !ov;
     stage.classList.toggle('is-overview', ov);
     updateAria();
+  }
+
+  /* ---------- Real 360 photos ---------- */
+  const photoEntry = () => panoramaFor(st.venue, st.area, st.mode);
+  const wantPhoto = () => !!photoEntry() && st.src !== 'model' && st.view === 'seat' && !comparing();
+  function photoOn() { return !!pano && panoShown && wantPhoto(); }
+
+  async function ensurePano() {
+    if (pano) return pano;
+    if (!panoPromise) {
+      panoPromise = import('../viewer/panorama.js').then(({ createPanorama }) => {
+        pano = createPanorama(panoHost, {
+          reducedMotion,
+          onChange: ({ zoom }) => { if (photoOn()) zoomLevelEl.textContent = `${Math.round(zoom * 10) / 10}x`; },
+        });
+        pano.canvas.addEventListener('pointerdown', () => stage.classList.add('is-used'), { once: true });
+        return pano;
+      }).catch((err) => { console.warn('[viewer] 360 photo viewer failed to start, showing the 3D model', err); panoPromise = null; return null; });
+    }
+    return panoPromise;
+  }
+
+  function paintCaption() {
+    const entry = photoEntry();
+    const seat = st.view === 'seat';
+    if (photoOn()) capText.textContent = `Photo: ${entry.credit}, ${entry.takenOn}. A real 360 photo from this area.`;
+    else capText.textContent = 'Illustrative model, not an exact venue rendering.';
+    soonEl.hidden = !(seat && !entry);
+    srcSlot.hidden = !(seat && entry && !comparing());
+    srcCtl.set(st.src);
+    tool.classList.toggle('is-photo-on', photoOn());
+    stage.classList.toggle('is-photo', photoOn());
+  }
+
+  // Shows the photo when the area has one and the visitor has not asked for the model.
+  async function paintPhoto() {
+    if (!wantPhoto()) {
+      panoShown = false; pano?.setActive(false);
+      paintCaption();
+      if (engine && firstFrame) { engine.setActive(engineShouldRun()); zoomLevelEl.textContent = `${Math.round((engine.heading()?.zoom || 1) * 10) / 10}x`; }
+      return;
+    }
+    const entry = photoEntry();
+    paintCaption();
+    if (!webglReady()) return; // the words-only fallback already covers the stage
+    const p = await ensurePano();
+    if (!p) { st.src = 'model'; paintPhoto(); return; }
+    if (panoSrc !== entry.src) {
+      panoShown = false; paintCaption();
+      panoSrc = entry.src;
+      const ok = await p.load(entry);
+      if (!ok) {
+        if (panoSrc === entry.src) panoSrc = '';
+        ctx.toast('The 360 photo could not load, so the 3D model is showing instead', { tone: 'warn' });
+        st.src = 'model'; paintPhoto(); sync();
+        return;
+      }
+    }
+    if (!wantPhoto() || photoEntry()?.src !== entry.src) { paintPhoto(); return; }
+    panoShown = true;
+    p.setActive(active);
+    engine?.setActive(false);
+    zoomLevelEl.textContent = `${Math.round(p.zoom * 10) / 10}x`;
+    paintCaption();
+    p.canvas.setAttribute('aria-label', `Real 360 degree photo from ${areaName(area(), st.mode).toLowerCase()} at ${venue().name}. Photo: ${entry.credit}, taken on ${entry.takenOn}. Drag or use the arrow keys to look around.`);
+  }
+
+  /* ---------- Real venue: Google's photorealistic 3D map ---------- */
+  function realCard(kind) {
+    const v = venue();
+    const nokey = kind === 'nokey';
+    realEmpty.innerHTML = html`<div class="rv__fallback-card rv__real-card">
+      <p class="eyebrow">${raw(icon('pin'))} Real venue</p>
+      <h3>${nokey ? 'Live 3D map not set up yet' : 'The live map could not load'}</h3>
+      <p>${nokey
+        ? `This view will show ${v.name} from the air on a live, photorealistic 3D map. It switches on once the map service is connected.`
+        : 'The map service did not respond just now. It may be your connection, or the service may be busy.'}</p>
+      <p class="fine-print">Seat view and the overview still work as normal.</p>
+      <div class="rv__real-actions">
+        ${raw(nokey ? '' : html`<button type="button" class="btn btn--gold btn--sm" data-act="real-retry">${raw(icon('rotate'))}<span>Try again</span></button>`)}
+        <button type="button" class="btn btn--ghost-ink btn--sm" data-act="real-back">${raw(icon('eye'))}<span>Back to seat view</span></button>
+      </div>
+    </div>`;
+  }
+
+  function paintReal(state) {
+    realEl.dataset.state = state;
+    realTools.classList.toggle('is-off', state !== 'ready');
+    if (state === 'nokey' || state === 'error') realCard(state); else realEmpty.innerHTML = '';
+  }
+  function paintOrbit(on) {
+    orbitBtn.setAttribute('aria-pressed', String(on));
+    orbitBtn.innerHTML = `${icon(on ? 'pause' : 'play')}<span>${on ? 'Pause the orbit' : 'Orbit the venue'}</span>`;
+  }
+
+  async function enterReal() {
+    realEl.hidden = false; realTools.hidden = false;
+    paintOrbit(!!real?.orbiting);
+    if (!GOOGLE_MAPS_KEY) { paintReal('nokey'); return; }
+    if (!real) {
+      if (!realPromise) {
+        paintReal('loading');
+        realPromise = import('../viewer/real-venue.js').then(({ createRealVenue }) => {
+          real = createRealVenue(realMap, { key: GOOGLE_MAPS_KEY, reducedMotion, onState: paintReal, onOrbit: paintOrbit });
+          return real;
+        }).catch(() => { paintReal('error'); realPromise = null; return null; });
+      }
+      await realPromise;
+      if (!real || st.view !== 'real') return;
+    }
+    real.setActive(active);
+    if (realVenue !== st.venue) { realVenue = st.venue; real.show(venue()); }
+  }
+  function leaveReal() {
+    realEl.hidden = true; realTools.hidden = true;
+    real?.setActive(false);
+  }
+  function retryReal() {
+    real?.dispose(); real = null; realPromise = null; realVenue = '';
+    enterReal();
   }
 
   /* ---------- Overview markers (HTML buttons over the canvas) ---------- */
@@ -573,6 +755,7 @@ export function mount(root, ctx) {
     btn.querySelector('span').textContent = on ? 'Close the comparison' : st.area === std.id ? 'Compare with hospitality' : 'Compare with a standard ticket';
     btn.setAttribute('aria-pressed', String(on));
     paintSplit(); renderDiff();
+    paintPhoto(); // the split screen always compares two 3D views
   }
 
   function applyCompare() {
@@ -622,9 +805,20 @@ export function mount(root, ctx) {
   /* ---------- Toolbar actions ---------- */
   tool.addEventListener('click', (e) => {
     const act = e.target.closest('[data-act]')?.dataset.act; if (!act) return;
-    if (act === 'zoom-in') engine?.zoomBy(1.4);
-    if (act === 'zoom-out') engine?.zoomBy(1 / 1.4);
-    if (act === 'reset') { if (st.view !== 'seat') { st.view = 'seat'; viewCtl.set('seat'); applyView(); sync(); } engine?.resetLook(); }
+    const look = photoOn() ? pano : engine;
+    if (act === 'zoom-in') look?.zoomBy(1.4);
+    if (act === 'zoom-out') look?.zoomBy(1 / 1.4);
+    if (act === 'reset') {
+      if (st.view !== 'seat') { st.view = 'seat'; viewCtl.set('seat'); applyView(); sync(); }
+      if (photoOn()) pano.reset(); else engine?.resetLook();
+    }
+    if (act === 'orbit' && real) {
+      if (!real.orbiting && reducedMotion()) { ctx.toast('The orbit is off because your device asks for reduced motion. Drag the map to look around.', { tone: 'info' }); return; }
+      real.orbit(!real.orbiting);
+    }
+    if (act === 'preset') real?.preset(e.target.closest('[data-preset]').dataset.preset);
+    if (act === 'real-retry') retryReal();
+    if (act === 'real-back') { st.view = 'seat'; viewCtl.set('seat'); applyView(); sync(); }
     if (act === 'wave') {
       if (reducedMotion()) { ctx.toast('The wave is paused because your device asks for reduced motion', { tone: 'info' }); return; }
       engine?.wave();
@@ -680,6 +874,7 @@ export function mount(root, ctx) {
     return {
       venue: st.venue, area: st.area, mode: st.mode, row: st.row, pos: st.pos, light: st.light, view: st.view,
       compare: st.compare || undefined, crowd: st.crowd !== 'full' ? st.crowd : undefined,
+      src: st.src === 'model' && photoEntry() ? 'model' : undefined,
     };
   }
   function sync() { if (active) ctx.setParams(params()); }
@@ -699,6 +894,7 @@ export function mount(root, ctx) {
     waveBtn.toggleAttribute('aria-disabled', !race && reducedMotion());
     stage.dataset.arch = arch(); stage.dataset.outdoor = String(outdoor);
     showPoster();
+    if (st.view === 'real') applyView(); else { stage.classList.remove('is-real'); leaveReal(); }
     paintCompare();
     renderInfo();
     renderMap();
@@ -713,7 +909,8 @@ export function mount(root, ctx) {
     if (p.row) st.row = p.row;
     if (p.pos) st.pos = p.pos;
     st.light = ['day', 'golden', 'night'].includes(p.light) ? p.light : null;
-    if (p.view === 'overview' || p.view === 'seat') st.view = p.view;
+    if (p.view === 'overview' || p.view === 'seat' || p.view === 'real') st.view = p.view;
+    st.src = p.src === 'model' ? 'model' : 'photo';
     // compare = the second area of the split screen. Older links put the standard area in
     // `area` and the hospitality area in `compare`; those are swapped round here.
     st.compare = null;
@@ -738,7 +935,7 @@ export function mount(root, ctx) {
     },
     deactivate() {
       active = false;
-      engine?.setActive(false);
+      engine?.setActive(false); pano?.setActive(false); real?.setActive(false);
       if (document.fullscreenElement === stage) document.exitFullscreen?.();
     },
     destroy() {
@@ -747,6 +944,8 @@ export function mount(root, ctx) {
       vpObserver.disconnect();
       document.removeEventListener('fullscreenchange', onFs);
       engine?.dispose(); engine = null;
+      pano?.dispose(); pano = null;
+      real?.dispose(); real = null;
     },
   };
 }

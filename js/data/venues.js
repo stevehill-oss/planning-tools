@@ -4,7 +4,7 @@
 //
 // Content rules baked in here:
 // - Tier-one restricted venues are deliberately absent and must never be added.
-// - The O2 appears only as "The Arena London". Wembley is not listed.
+// - The Greenwich arena appears only as "The Arena London". Some stadiums are not listed.
 // - No capacities, box numbers, distances in metres or prices: nothing we cannot source.
 // - Scores are indicative opinions for comparison, always labelled as such in the UI.
 
@@ -46,14 +46,36 @@ export const MODES = {
   ],
 };
 
+// geo: where the "Real venue" view (Google's photorealistic 3D map) points.
+//   lat, lng  decimal degrees, copied from the Wikipedia infobox coordinates or the
+//             Wikidata coordinate location (source URL in the comment on each line, checked
+//             30/10/2026). Not invented or estimated.
+//   range     camera distance from the venue in metres, chosen so the whole venue fits.
+//   tilt      degrees from straight down (0) towards the horizon (90).
+//   heading   compass degrees the camera faces at the start (0 = north). The map orbits,
+//             so this only sets the opening angle.
 export const VENUES = [
-  { id: 'tottenham-hotspur-stadium', name: 'Tottenham Hotspur Stadium', city: 'London', archetype: 'stadium', icon: 'stadium' },
-  { id: 'the-arena-london', name: 'The Arena London', city: 'London', archetype: 'arena', icon: 'music' },
-  { id: 'ao-arena', name: 'AO Arena', city: 'Manchester', archetype: 'arena', icon: 'music' },
-  { id: 'co-op-live', name: 'Co-op Live', city: 'Manchester', archetype: 'arena', icon: 'music' },
-  { id: 'royal-albert-hall', name: 'Royal Albert Hall', city: 'London', archetype: 'hall', icon: 'hall' },
-  { id: 'ascot-racecourse', name: 'Ascot Racecourse', city: 'Berkshire', archetype: 'racecourse', icon: 'racing', racing: 'flat' },
-  { id: 'cheltenham-racecourse', name: 'Cheltenham Racecourse', city: 'Gloucestershire', archetype: 'racecourse', icon: 'racing', racing: 'jumps' },
+  // https://en.wikipedia.org/wiki/Tottenham_Hotspur_Stadium (51.6044, -0.0664)
+  { id: 'tottenham-hotspur-stadium', name: 'Tottenham Hotspur Stadium', city: 'London', archetype: 'stadium', icon: 'stadium',
+    geo: { lat: 51.6044, lng: -0.0664, range: 650, tilt: 62, heading: 0 } },
+  // https://www.wikidata.org/wiki/Q5364202 coordinate location 51 30 10 N, 0 0 11 E (51.50278, 0.00306)
+  { id: 'the-arena-london', name: 'The Arena London', city: 'London', archetype: 'arena', icon: 'music',
+    geo: { lat: 51.50278, lng: 0.00306, range: 700, tilt: 60, heading: 0 } },
+  // https://en.wikipedia.org/wiki/Manchester_Arena (53.48806, -2.24389)
+  { id: 'ao-arena', name: 'AO Arena', city: 'Manchester', archetype: 'arena', icon: 'music',
+    geo: { lat: 53.48806, lng: -2.24389, range: 550, tilt: 60, heading: 0 } },
+  // https://en.wikipedia.org/wiki/Co-op_Live (53.48639, -2.19972)
+  { id: 'co-op-live', name: 'Co-op Live', city: 'Manchester', archetype: 'arena', icon: 'music',
+    geo: { lat: 53.48639, lng: -2.19972, range: 550, tilt: 60, heading: 0 } },
+  // https://en.wikipedia.org/wiki/Royal_Albert_Hall (51.5011, -0.1774)
+  { id: 'royal-albert-hall', name: 'Royal Albert Hall', city: 'London', archetype: 'hall', icon: 'hall',
+    geo: { lat: 51.5011, lng: -0.1774, range: 420, tilt: 60, heading: 0 } },
+  // https://en.wikipedia.org/wiki/Ascot_Racecourse (51.41611, -0.67694)
+  { id: 'ascot-racecourse', name: 'Ascot Racecourse', city: 'Berkshire', archetype: 'racecourse', icon: 'racing', racing: 'flat',
+    geo: { lat: 51.41611, lng: -0.67694, range: 1400, tilt: 58, heading: 0 } },
+  // https://en.wikipedia.org/wiki/Cheltenham_Racecourse (51.92028, -2.05778)
+  { id: 'cheltenham-racecourse', name: 'Cheltenham Racecourse', city: 'Gloucestershire', archetype: 'racecourse', icon: 'racing', racing: 'jumps',
+    geo: { lat: 51.92028, lng: -2.05778, range: 1400, tilt: 58, heading: 0 } },
 ];
 
 export const venueById = (id) => VENUES.find((v) => v.id === id) || null;
