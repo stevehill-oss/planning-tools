@@ -65,6 +65,11 @@ const PATHS = {
   crown: '<path d="M3 18h18M4 18L3 7l5 4 4-6 4 6 5-4-1 11"/>',
   handshake: '<path d="M11 17l2 2a1.5 1.5 0 0 0 2-2M14 14l2.5 2.5a1.5 1.5 0 0 0 2-2L15 11M2 11l4-4 4 1 3-2 3 1 4 4-3 3-4-3-3 2-2-1-3 3z"/>',
   sparkles: '<path d="M9 3l1.5 4.5L15 9l-4.5 1.5L9 15l-1.5-4.5L3 9l4.5-1.5z"/><path d="M18 13l.9 2.1L21 16l-2.1.9L18 19l-.9-2.1L15 16l2.1-.9z"/>',
+  // Appended 02/11/2026 by the viewer agent (Matterport-style mode bar).
+  cube: '<path d="M12 2l9 5v10l-9 5-9-5V7z"/><path d="M3 7l9 5 9-5M12 12v10"/>',
+  ruler: '<path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/>',
+  steps: '<circle cx="12" cy="17" r="4"/><circle cx="12" cy="17" r="1.2"/><path d="M12 3v7M9 7l3 3 3-3"/>',
+  plan: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 10h7v11M14 3v7h7"/>',
 };
 
 let injected = false;

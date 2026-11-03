@@ -9,8 +9,9 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-const YAW_LIMIT = 1.3;        // radians either side of straight ahead
-const PITCH_MIN = -0.75; const PITCH_MAX = 0.55;
+const YAW_LIMIT = Infinity;   // seat view turns a full 360 degrees (Matterport style)
+// Looking down is limited to about 70 degrees below level (absolute), up to about 60 above.
+const PITCH_MIN = -1.0; const PITCH_MAX = 0.9; const ABS_DOWN = -1.22; const ABS_UP = 1.05;
 const ZOOM_MIN = 1; const ZOOM_MAX = 4;
 const BASE_HFOV = 74;         // degrees, horizontal, at 1x
 
@@ -56,7 +57,7 @@ export class CameraRig {
   /* ---------- Seat placement ---------- */
 
   // spec: { position: [x,y,z], target: [x,y,z] }. fly: tween from the current view.
-  setSeat(spec, { fly = false, keepLook = false } = {}) {
+  setSeat(spec, { fly = false, keepLook = false, glide = false } = {}) {
     this.pos.fromArray(spec.position); this.target.fromArray(spec.target);
     const d = this.target.clone().sub(this.pos);
     this.baseYaw = Math.atan2(d.x, d.z);
@@ -64,7 +65,9 @@ export class CameraRig {
     if (!keepLook) { this.yaw = 0; this.pitch = 0; this.vy = 0; this.vp = 0; }
     if (fly && !this.reduced()) {
       const endQ = this.seatQuaternion();
-      this.fly = { t: 0, dur: 1.7, p0: this.camera.position.clone(), q0: this.camera.quaternion.clone(), p1: this.pos.clone(), q1: endQ, f0: this.camera.fov };
+      const dist = this.camera.position.distanceTo(this.pos);
+      // A glide (Move) is a short eased step between seats; a fly comes down from the overview.
+      this.fly = { t: 0, dur: glide ? Math.min(1.1, 0.55 + dist / 60) : 1.7, p0: this.camera.position.clone(), q0: this.camera.quaternion.clone(), p1: this.pos.clone(), q1: endQ, f0: this.camera.fov, glide, lift: glide ? 0.05 : 0.12 };
       this.orbit.enabled = false;
       this.mode = 'flying';
     } else {
@@ -81,7 +84,7 @@ export class CameraRig {
   }
 
   dirFor(yaw, pitch) {
-    const Y = this.baseYaw + yaw; const P = clamp(this.basePitch + pitch, -1.35, 1.2);
+    const Y = this.baseYaw + yaw; const P = clamp(this.basePitch + pitch, ABS_DOWN, ABS_UP);
     return new THREE.Vector3(Math.sin(Y) * Math.cos(P), Math.sin(P), Math.cos(Y) * Math.cos(P));
   }
 
@@ -91,7 +94,7 @@ export class CameraRig {
     const p = new THREE.Vector3().fromArray(spec.position); const t = new THREE.Vector3().fromArray(spec.target);
     const d = t.sub(p);
     const Y = Math.atan2(d.x, d.z) + this.yaw;
-    const P = clamp(Math.atan2(d.y, Math.hypot(d.x, d.z)) + this.pitch, -1.35, 1.2);
+    const P = clamp(Math.atan2(d.y, Math.hypot(d.x, d.z)) + this.pitch, ABS_DOWN, ABS_UP);
     cam.position.copy(p);
     cam.lookAt(p.x + Math.sin(Y) * Math.cos(P), p.y + Math.sin(P), p.z + Math.cos(Y) * Math.cos(P));
     cam.fov = this.fovFor(this.zoomLevel, cam.aspect);
@@ -223,6 +226,7 @@ export class CameraRig {
   }
 
   reset() {
+    this.yaw = Math.atan2(Math.sin(this.yaw), Math.cos(this.yaw)); // turn back the short way
     if (this.reduced()) { this.yaw = 0; this.pitch = 0; this.zoomTarget = this.zoomLevel = 1; this.applySeat(); this.onChange(); return; }
     this.resetAnim = { t: 0, y0: this.yaw, p0: this.pitch, z0: this.zoomLevel };
     this.vy = 0; this.vp = 0;
@@ -238,12 +242,12 @@ export class CameraRig {
       F.t = Math.min(1, F.t + dt / F.dur);
       const e = ease(F.t);
       const p = F.p0.clone().lerp(F.p1, e);
-      p.y += Math.sin(Math.PI * e) * F.p0.distanceTo(F.p1) * 0.12;
+      p.y += Math.sin(Math.PI * e) * F.p0.distanceTo(F.p1) * F.lift;
       this.camera.position.copy(p);
       this.camera.quaternion.copy(F.q0).slerp(F.q1, e);
       const f1 = this.fovFor(this.zoomLevel);
       this.camera.fov = F.f0 + (f1 - F.f0) * e; this.camera.updateProjectionMatrix();
-      if (F.t >= 1) { this.fly = null; this.mode = 'seat'; this.applySeat(); this.onFlyEnd(); }
+      if (F.t >= 1) { this.fly = null; this.mode = 'seat'; this.applySeat(); this.onFlyEnd(F.glide ? 'glide' : 'fly'); }
       this.onChange();
       return true;
     }
@@ -259,7 +263,6 @@ export class CameraRig {
       this.turn(this.vy * dt, this.vp * dt);
       const decay = Math.exp(-dt * 5.5);
       this.vy *= decay; this.vp *= decay;
-      if (this.yaw <= -YAW_LIMIT || this.yaw >= YAW_LIMIT) this.vy = 0;
       moved = true;
     }
     if (Math.abs(this.zoomLevel - this.zoomTarget) > 1e-3) {

@@ -138,3 +138,31 @@
 .sf-actions { padding: 0 var(--s-6) var(--s-4); }
 .sf-fine { padding: 0 var(--s-6) var(--s-6); margin: 0; }
 @container (max-width: 440px) { .sf-actions { padding: 0 var(--s-5) var(--s-4); } .sf-fine { padding: 0 var(--s-5) var(--s-5); } }
+
+/* ---------- 02/11/2026: real products, labelled facts, website links ---------- */
+.sf-result__top--plain { align-items: flex-start; }
+.sf-tag { display: inline-block; padding: 0 6px; border-radius: var(--r-pill); font-size: 10px; font-weight: 600; letter-spacing: .02em; line-height: 1.6; white-space: nowrap; vertical-align: 1px; }
+.sf-tag--ok { color: var(--ok); background: var(--ok-bg); }
+.sf-tag--mod { color: var(--gold-800); background: var(--gold-200); }
+.sf-src { color: var(--text-muted); font-size: var(--fs-xs); }
+.sf-nums { margin: 0 0 var(--s-2); display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-3); }
+.sf-nums > div { padding: var(--s-3); border-radius: var(--r-sm); background: var(--cream-100); }
+.sf-nums dt { font-size: var(--fs-xs); color: var(--text-muted); }
+.sf-nums dd { margin: 0; font-family: var(--font-display); font-size: var(--fs-xl); font-weight: 700; color: var(--text-strong); }
+.sf-facts { display: grid; gap: var(--s-2); font-size: var(--fs-sm); }
+.sf-facts p { margin: 0; }
+.sf-runners { display: grid; gap: var(--s-3); }
+.sf-runners .sf-sub { margin-bottom: 0; }
+.sf-runner__inner > div { flex: 1; min-width: 0; }
+.sf-links { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+.sf-dated { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2); }
+.sf-dated__link { display: inline-flex; align-items: center; gap: var(--s-2); color: var(--gold-700); font-weight: 500; font-size: var(--fs-sm); }
+.sf-dated__link .icon { width: 16px; height: 16px; flex: none; }
+.sf-next { grid-auto-flow: row !important; }
+@container (min-width: 600px) { .sf-next { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+.sf-next__btn { text-decoration: none; }
+.sf-next__btn--site > span:nth-child(2) { font-weight: 600; font-size: var(--fs-sm); }
+.sf-hint--tight { margin: var(--s-3) 0 var(--s-2); }
+.sf-venue-pick { display: grid; gap: var(--s-2); }
+.sf-loading { padding: var(--s-6); display: grid; gap: var(--s-4); }
+.sf-loading .skeleton { height: 120px; }

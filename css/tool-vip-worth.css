@@ -188,3 +188,7 @@ path.vw-s-value, i.vw-s-value { fill: var(--chart-4); background: var(--chart-4)
 .vw-next__btn--ink .vw-next__icon { background: rgba(216, 174, 104, .16); color: var(--gold-400); }
 .vw-next__btn--ink:hover { border-color: var(--gold-400); }
 .vw-fine { margin: 0; }
+
+/* Next step on our website (02/11/2026): a link styled like the other next-step cards. */
+.vw-next__btn--site { text-decoration: none; color: var(--text); font-weight: 600; font-size: var(--fs-sm); }
+.vw-next__btn--site:focus-visible { outline: 2px solid var(--gold-600); outline-offset: 2px; }

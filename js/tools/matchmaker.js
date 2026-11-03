@@ -1,13 +1,19 @@
 // Occasion Matchmaker: occasion and tastes in, ranked event types out.
-// Owned by the shell agent. Rankings use indicative affinities in js/data/occasions.js.
+// Owned by the shell agent; reworked 02/11/2026. The order uses our own judgement of how
+// well each kind of event suits an occasion and a group (EVENT_PROFILES in occasions.js), and
+// says so on screen. No percentages. Each match names a real product at a venue that stages
+// it (where one exists in these tools), a verified page on our website and a seat preview.
 
-import { segmented, chips, optionCards, stepper, actionBar, group, el, icon } from '../ui.js';
+import { chips, optionCards, stepper, actionBar, group, el, icon } from '../ui.js';
 import { html, raw } from '../core.js';
-import { CATEGORY_LINK_KEY } from '../data/venues.js';
+import { venueById, areaName, daysFor, defaultDay } from '../data/venues.js';
 import {
-  PLANNABLE_EVENTS, CATEGORY_LABEL, BUDGETS, budgetLevel, OCCASIONS, LIKES, REGIONS, EVENT_PROFILES,
-  areasForEvent, pickVenue, modeFor,
+  PLANNABLE_EVENTS, CATEGORY_LABEL, OCCASIONS, LIKES, REGIONS, EVENT_PROFILES,
+  stagedAt, pickStaging, productsFor,
 } from '../data/occasions.js';
+import { eventLinks, occasionLinks, outLinkHtml, siteProductName } from '../data/prestige-links.js';
+
+const TOOL = 'occasion-matchmaker';
 
 const OCC_LABEL = Object.fromEntries(OCCASIONS.map((o) => [o.value, o.label]));
 const OCC_PHRASE = Object.fromEntries(OCCASIONS.map((o) => [o.value, o.phrase]));
@@ -21,9 +27,10 @@ const listJoin = (arr) => (arr.length <= 1 ? arr.join('') : `${arr.slice(0, -1).
 
 const PRIVATE_OCCASIONS = new Set(['clients', 'proposal', 'anniversary']);
 
-/* ---------- Scoring ----------
-   Occasion fit 40 per cent, your likes 40 per cent, group size 10 per cent,
-   budget and region 5 per cent each. Mapped onto a 40 to 98 scale. */
+/* ---------- Ordering ----------
+   Our judgement, not a measurement: occasion fit 35 per cent, your likes 35 per cent, what
+   the occasion itself tends to reward 15 per cent, group size 10 per cent and whether a venue
+   in your region stages it 5 per cent. No likes ticked: the occasion carries more. */
 
 function scoreEvent(ev, st) {
   const p = EVENT_PROFILES[ev.id];
@@ -34,45 +41,37 @@ function scoreEvent(ev, st) {
   let groupFit = 1;
   if (st.size > 12) groupFit = p.group / 3;
   else if (st.size <= 2) groupFit = p.group <= 2 ? 1 : 0.75;
-  const lvl = budgetLevel(st.budget) || 3;
-  const budgetFit = lvl >= 5 ? (ev.archetypes.length ? 1 : 0.85) : lvl <= 1 ? (p.likes.dining >= 3 ? 0.7 : 1) : 1;
-  const venue = ev.archetypes.length ? pickVenue(ev.archetypes[0], st.region) : null;
+  const staging = pickStaging(ev.id, st.region);
+  const venue = staging ? venueById(staging.venue) : null;
   const region = REGIONS.find((r) => r.value === st.region);
   const inRegion = !!(venue && region?.cities?.includes(venue.city));
   const regionFit = inRegion ? 1 : st.region === 'uk' ? 0.8 : 0.6;
   const prefers = OCCASIONS.find((o) => o.value === st.occasion)?.prefers || [];
   const implicit = prefers.length ? prefers.reduce((s, t) => s + (p.likes[t] ?? 0) / 3, 0) / prefers.length : 0.5;
-
-  const raw01 = likes == null
-    ? occ * 0.55 + implicit * 0.2 + groupFit * 0.12 + budgetFit * 0.07 + regionFit * 0.06
-    : occ * 0.35 + likes * 0.35 + implicit * 0.12 + groupFit * 0.08 + budgetFit * 0.05 + regionFit * 0.05;
-  return { ev, p, occ, likeVals, groupFit, inRegion, venue, match: clamp(Math.round(40 + raw01 * 58), 40, 98) };
+  const score = likes == null
+    ? occ * 0.58 + implicit * 0.2 + groupFit * 0.15 + regionFit * 0.07
+    : occ * 0.35 + likes * 0.35 + implicit * 0.15 + groupFit * 0.1 + regionFit * 0.05;
+  return { ev, p, occ, likeVals, groupFit, inRegion, venue, staging, score };
 }
 
-function hospitalityStyle(r, st) {
-  const areas = areasForEvent(r.ev.id);
-  const lvl = budgetLevel(st.budget) || 3;
-  const wantPrivate = PRIVATE_OCCASIONS.has(st.occasion) || lvl >= 5 || (st.size >= 6 && st.size <= 20 && lvl >= 4);
-  const byTier = areas.slice().sort((a, b) => b.tier - a.tier);
-  let area;
-  let why;
-  if (wantPrivate) {
-    area = byTier[0];
-    why = st.occasion === 'clients' ? 'Space to talk and a host to look after your guests.'
-      : st.occasion === 'proposal' ? 'Privacy for the moment that matters.'
-        : 'Your own space makes the day feel like an occasion.';
-  } else if (st.size > 12 || st.occasion === 'team' || st.occasion === 'stag-hen') {
-    area = byTier.find((a) => a.tier === 4) || byTier[1] || byTier[0];
-    why = 'Room for a bigger group to eat, talk and enjoy it together.';
-  } else if (lvl <= 2) {
-    area = byTier[byTier.length - 1];
-    why = 'A comfortable step up from a standard ticket without the full package.';
-  } else {
-    area = byTier.find((a) => a.tier === 3) || byTier[1] || byTier[0];
-    why = 'A great seat, with somewhere comfortable to eat and drink.';
+// A real product at the venue that stages the event, chosen from what the venue lists.
+function suggestion(r, st) {
+  if (!r.staging) return null;
+  const day = daysFor(r.staging.venue).length ? defaultDay(r.staging.venue) : null;
+  const list = productsFor(r.ev.id, r.staging.venue, day);
+  if (!list.length) return null;
+  const has = (a, k) => (a.inc || []).includes(k);
+  const wantPrivate = PRIVATE_OCCASIONS.has(st.occasion) || (st.size >= 6 && st.size <= 20 && st.occasion === 'team');
+  const big = st.size > 12 || st.occasion === 'team' || st.occasion === 'stag-hen';
+  let area; let why;
+  if (wantPrivate && (area = list.find((a) => has(a, 'private') && /suite|box|booth/i.test(a.seatType || '')))) {
+    why = `${area.seatType}, so your group has its own space.`;
+  } else if (big && (area = list.find((a) => has(a, 'lounge') && has(a, 'dining')))) {
+    why = 'A lounge with dining listed, so a bigger group can eat and talk together.';
+  } else if ((area = list.find((a) => has(a, 'dining')) || list[0])) {
+    why = has(area, 'dining') ? 'Dining is listed by the venue, with seats for the action.' : `${area.seatType}.`;
   }
-  const mode = area?.archetype ? modeFor(r.ev.id, area.archetype) : null;
-  return { area, why, name: area ? (area.nameByMode?.[mode] || area.name) : 'Hospitality package', mode };
+  return { area, why, day, name: siteProductName(r.staging.venue, area.id) || areaName(area, r.staging.mode, day) };
 }
 
 function whyItFits(r, st) {
@@ -82,9 +81,9 @@ function whyItFits(r, st) {
   else if (r.occ >= 0.66) out.push(`Works well for ${phrase}`);
   const hits = st.likes.filter((l) => (r.p.likes[l] ?? 0) >= 2).map((l) => LIKE_LABEL[l].toLowerCase());
   if (hits.length) out.push(`Matches ${listJoin(hits.slice(0, 3))} from your list`);
-  if (st.size > 12 && r.p.group >= 3) out.push(`Handles a large group of ${st.size} well`);
+  if (st.size > 12 && r.p.group >= 3) out.push(`Suits a large group of ${st.size}`);
   else if (st.size <= 2 && r.p.group <= 2) out.push(st.size === 1 ? 'Easy to enjoy on your own terms' : 'Easy to make feel personal for two');
-  if (r.inRegion && r.venue) out.push(`One of our example venues is in ${REGION_LABEL[st.region]}: ${r.venue.name}`);
+  if (r.inRegion && r.venue) out.push(`Staged at ${r.venue.name}, in ${REGION_LABEL[st.region]}`);
   if (!out.length) out.push('A versatile option that suits most groups');
   return out.slice(0, 3);
 }
@@ -92,7 +91,7 @@ function whyItFits(r, st) {
 /* ---------- Mount ---------- */
 
 export function mount(root, ctx) {
-  const fresh = () => ({ occasion: null, size: 4, budget: null, region: 'uk', likes: [] });
+  const fresh = () => ({ occasion: null, size: 4, region: 'uk', likes: [] });
   const st = fresh();
 
   root.innerHTML = '';
@@ -113,14 +112,10 @@ export function mount(root, ctx) {
   occ.el.classList.add('mm-occasions');
   g1.append(occ.el);
 
-  const g2 = group('Group and budget', '2');
+  const g2 = group('How many are going?', '2');
   const size = stepper({ label: 'How many people?', min: SIZE_MIN, max: SIZE_MAX, value: st.size, onChange: (v) => { st.size = v; update(); } });
   const sizeHint = el(`<p class="mm-hint">For groups over ${SIZE_MAX}, a specialist can plan it with you.</p>`);
-  const budgetField = el('<div class="field"><span class="field__label">Budget level</span></div>');
-  const budget = segmented({ label: 'Budget level', options: BUDGETS.map((b) => ({ value: b.value, label: b.label })), value: null, onChange: (v) => { st.budget = v; update(); } });
-  budget.el.classList.add('mm-budget');
-  budgetField.append(budget.el);
-  g2.append(size.el, sizeHint, budgetField);
+  g2.append(size.el, sizeHint);
 
   const g3 = group('Where?', '3');
   const region = chips({ label: 'Region', options: REGIONS.map((r) => ({ value: r.value, label: r.label })), multi: false, value: st.region, onChange: (v) => { st.region = v; update(); } });
@@ -157,7 +152,7 @@ export function mount(root, ctx) {
   let lastKey = '';
   let liveTimer = null;
 
-  const params = () => ({ occasion: st.occasion, size: st.size, budget: st.budget, region: st.region !== 'uk' ? st.region : null, likes: st.likes });
+  const params = () => ({ occasion: st.occasion, size: st.size, region: st.region !== 'uk' ? st.region : null, likes: st.likes });
 
   function update({ write = true } = {}) {
     if (write) ctx.setParams(params());
@@ -167,12 +162,12 @@ export function mount(root, ctx) {
     if (!ready) { top = null; lastKey = ''; return; }
 
     top = PLANNABLE_EVENTS.map((ev) => scoreEvent(ev, st)).filter(Boolean)
-      .sort((a, b) => b.match - a.match || a.ev.label.localeCompare(b.ev.label)).slice(0, 3);
+      .sort((a, b) => b.score - a.score || a.ev.label.localeCompare(b.ev.label)).slice(0, 3);
 
     const who = st.size === 1 ? 'just you' : `${st.size} people`;
-    head.innerHTML = html`<p class="eyebrow">${raw(icon('sparkles'))} Your top three</p>
-      <h3>Best matches for ${OCC_PHRASE[st.occasion]}</h3>
-      <p class="muted">${who[0].toUpperCase() + who.slice(1)}, ${REGION_LABEL[st.region]}${st.budget ? `, ${BUDGETS.find((b) => b.value === st.budget).label.toLowerCase()} budget` : ''}${st.likes.length ? `, enjoys ${listJoin(st.likes.map((l) => LIKE_LABEL[l].toLowerCase()))}` : ''}.</p>`;
+    head.innerHTML = html`<p class="eyebrow">${raw(icon('sparkles'))} Our top three suggestions</p>
+      <h3>For ${OCC_PHRASE[st.occasion]}</h3>
+      <p class="muted">${who[0].toUpperCase() + who.slice(1)}, ${REGION_LABEL[st.region]}${st.likes.length ? `, enjoys ${listJoin(st.likes.map((l) => LIKE_LABEL[l].toLowerCase()))}` : ''}.</p>`;
 
     const key = top.map((r) => r.ev.id).join(',');
     const reorder = key !== lastKey;
@@ -185,41 +180,31 @@ export function mount(root, ctx) {
       top.forEach((r, i) => {
         const c = list.children[i];
         const fresh = el(cardHtml(r, i));
-        c.querySelector('[data-pct]').textContent = `${r.match}%`;
-        c.querySelector('.mm-bar span').style.setProperty('--v', String(r.match / 100));
-        c.querySelector('.mm-bar').setAttribute('aria-valuenow', String(r.match));
         ['[data-why]', '[data-style]', '[data-actions]'].forEach((s) => { c.querySelector(s).replaceWith(fresh.querySelector(s)); });
       });
     }
 
-    const region = REGIONS.find((r) => r.value === st.region);
-    note.textContent = st.region === 'europe'
-      ? 'For events in Europe, a specialist can tell you what is available on your dates. Previews use our example UK venues. Match scores are indicative.'
-      : region && Array.isArray(region.cities) && !region.cities.length
-        ? 'Previews use our example venues, which may be outside your region. A specialist can find options nearer to you. Match scores are indicative.'
-        : 'Match scores are indicative, based on your answers. Seat previews are illustrative models, not exact venue renderings.';
+    const extra = occasionLinks(st.occasion, { tool: TOOL });
+    note.innerHTML = html`This order is our own judgement from your answers, not a measurement. Seat previews are illustrative models, not exact venue renderings.${raw(extra.length ? html` Also useful: ${raw(extra.map((l) => outLinkHtml(l, { cls: 'mm-note__link' })).join(', '))}.` : '')}`;
 
     clearTimeout(liveTimer);
-    liveTimer = setTimeout(() => { live.textContent = `Top matches: ${top.map((r) => `${r.ev.label} ${r.match} per cent`).join(', ')}.`; }, 700);
+    liveTimer = setTimeout(() => { live.textContent = `Top suggestions: ${top.map((r) => r.ev.label).join(', ')}.`; }, 700);
   }
 
   function cardHtml(r, i) {
-    const style = hospitalityStyle(r, st);
+    const sug = suggestion(r, st);
     const cat = r.ev.category;
-    const link = ctx.links[CATEGORY_LINK_KEY[cat]];
-    const arch = r.ev.archetypes[0];
-    const canPreview = !!(arch && style.area && !style.area.generic);
-    const venue = canPreview ? pickVenue(arch, st.region) : null;
+    const link = eventLinks(r.ev.id, { tool: TOOL })[0] || null;
+    const venue = sug ? venueById(r.staging.venue) : null;
+    const others = stagedAt(r.ev.id).filter((s) => s.venue !== r.staging?.venue).map((s) => venueById(s.venue)?.name).filter(Boolean);
     return html`<li class="mm-card${i === 0 ? ' mm-card--top' : ''}" style="--i:${i}" data-event="${r.ev.id}">
       <div class="mm-card__head">
         <span class="mm-card__rank" aria-hidden="true">${i + 1}</span>
         <div class="mm-card__title">
-          <p class="mm-card__cat">${CATEGORY_LABEL[cat]}${raw(i === 0 ? ' <span class="badge badge--gold">Top match</span>' : '')}</p>
+          <p class="mm-card__cat">${CATEGORY_LABEL[cat]}${raw(i === 0 ? ' <span class="badge badge--gold">Our first suggestion</span>' : '')}</p>
           <h4>${r.ev.label}</h4>
         </div>
-        <span class="mm-card__pct" data-pct>${r.match}%</span>
       </div>
-      <div class="mm-bar" role="meter" aria-label="Match for ${r.ev.label}, indicative" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${r.match}"><span style="--v:${r.match / 100}"></span></div>
       <div class="mm-card__grid">
         <div data-why>
           <p class="mm-sub">Why it fits</p>
@@ -232,11 +217,12 @@ export function mount(root, ctx) {
       </div>
       <div class="mm-style" data-style>
         <span class="mm-style__icon">${raw(icon('crown'))}</span>
-        <div><p class="mm-sub">Suggested hospitality style</p><p class="mm-style__name">${style.name}</p><p class="mm-style__why">${style.why}</p></div>
+        <div>${raw(sug ? html`<p class="mm-sub">A product to look at</p><p class="mm-style__name">${sug.name}, ${venue.name}</p><p class="mm-style__why">${sug.why}${others.length ? ` Also staged at ${listJoin(others)}.` : ''}</p>`
+          : html`<p class="mm-sub">Where to look</p><p class="mm-style__name">${r.ev.label} on our website</p><p class="mm-style__why">We do not model a venue for this in these tools, so our website lists what we offer.</p>`)}</div>
       </div>
       <div class="mm-card__actions" data-actions>
-        ${raw(canPreview ? html`<button type="button" class="btn btn--ink btn--sm" data-preview data-venue="${venue.id}" data-area="${style.area.id}" data-mode="${style.mode}">${raw(icon('eye'))}<span>Preview the seats</span></button>` : '')}
-        <a class="btn btn--ghost btn--sm" href="${link}" target="_blank" rel="noopener">${raw(icon('external'))}<span>Browse ${CATEGORY_LABEL[cat].toLowerCase()} events</span></a>
+        ${raw(sug ? html`<button type="button" class="btn btn--ink btn--sm" data-preview data-venue="${venue.id}" data-area="${sug.area.id}" data-mode="${r.staging.mode}" data-day="${sug.day || ''}">${raw(icon('eye'))}<span>Preview the seats</span></button>` : '')}
+        ${raw(link ? outLinkHtml(link, { cls: 'btn btn--ghost btn--sm', iconSvg: icon('external') }) : '')}
       </div>
     </li>`;
   }
@@ -244,61 +230,60 @@ export function mount(root, ctx) {
   list.addEventListener('click', (e) => {
     const b = e.target.closest('[data-preview]');
     if (!b) return;
-    ctx.navigate('reality-viewer', { venue: b.dataset.venue, area: b.dataset.area, mode: b.dataset.mode });
+    ctx.navigate('reality-viewer', Object.fromEntries(Object.entries({ venue: b.dataset.venue, area: b.dataset.area, mode: b.dataset.mode, day: b.dataset.day }).filter(([, v]) => v)));
   });
 
   function lines() {
     if (!top) return [];
     return [
       `Occasion: ${OCC_LABEL[st.occasion]}, ${st.size === 1 ? '1 person' : `${st.size} people`}`,
-      `Region: ${REGION_LABEL[st.region]}${st.budget ? `, budget level: ${BUDGETS.find((b) => b.value === st.budget).label}` : ''}`,
+      `Region: ${REGION_LABEL[st.region]}`,
       st.likes.length ? `Enjoys: ${st.likes.map((l) => LIKE_LABEL[l]).join(', ')}` : null,
-      ...top.map((r, i) => `${i + 1}. ${r.ev.label}, ${r.match}% match (indicative), suggested: ${hospitalityStyle(r, st).name}`),
+      ...top.map((r, i) => { const s = suggestion(r, st); return `${i + 1}. ${r.ev.label}${s ? `, for example ${s.name} at ${venueById(r.staging.venue).name}` : ''}`; }),
     ].filter(Boolean);
   }
 
   function addToBrief() {
     if (!top) return;
     ctx.brief.add({
-      tool: 'occasion-matchmaker',
+      tool: TOOL,
       title: `${OCC_LABEL[st.occasion]}: ${top[0].ev.label}`,
-      subtitle: `Top match ${top[0].match}%, then ${top[1].ev.label} and ${top[2].ev.label}`,
+      subtitle: `Our first suggestion, then ${top[1].ev.label} and ${top[2].ev.label}`,
       lines: lines(),
-      params: params(),
+      params: { ...params(), event: top[0].ev.id },
     });
   }
 
   function shareResult() {
     if (!top) return;
-    ctx.share.send({ title: 'Occasion Matchmaker', text: `Top match for ${OCC_PHRASE[st.occasion]}: ${top[0].ev.label}`, url: ctx.shareUrl(params()) });
+    ctx.share.send({ title: 'Occasion Matchmaker', text: `Our first suggestion for ${OCC_PHRASE[st.occasion]}: ${top[0].ev.label}`, url: ctx.shareUrl(params()) });
   }
 
   function enquire() {
+    const s = top ? suggestion(top[0], st) : null;
     ctx.openEnquiry({
-      tool: 'occasion-matchmaker',
-      event: top ? `${OCC_LABEL[st.occasion]}, ${top[0].ev.label.toLowerCase()} or similar` : '',
+      tool: TOOL,
       size: st.size,
       summary: top ? `${OCC_LABEL[st.occasion]} for ${st.size === 1 ? '1 person' : `${st.size} people`}` : 'Help choosing an event',
       lines: lines(),
+      context: top ? { event: top[0].ev.id, venue: s ? top[0].staging.venue : null, area: s ? s.area.id : null, mode: s ? top[0].staging.mode : null, day: s?.day || null } : null,
     });
   }
 
   function applyToControls() {
     occ.set(st.occasion);
     size.set(st.size);
-    budget.set(st.budget);
     region.set(st.region);
     likes.set(st.likes);
   }
 
   function fromParams(p = {}) {
-    const keys = ['occasion', 'size', 'budget', 'region', 'likes'];
+    const keys = ['occasion', 'size', 'region', 'likes'];
     if (!keys.some((k) => p[k] != null && p[k] !== '')) return false;
     const next = fresh();
     if (OC_OK(p.occasion)) next.occasion = p.occasion;
     const n = parseInt(p.size, 10);
     if (Number.isFinite(n)) next.size = clamp(n, SIZE_MIN, SIZE_MAX);
-    if (BUDGETS.some((b) => b.value === p.budget)) next.budget = p.budget;
     if (REGION_LABEL[p.region]) next.region = p.region;
     next.likes = String(p.likes || '').split(',').filter((l) => LIKE_LABEL[l]);
     Object.assign(st, next);

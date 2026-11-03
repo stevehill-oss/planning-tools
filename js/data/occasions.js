@@ -1,12 +1,38 @@
-// Data for Where Should I Sit? and Occasion Matchmaker. Owned by the shell agent.
-// Every number here is an indicative opinion used for ranking, never a fact about a
-// venue. No capacities, prices or distances. Golf is deliberately absent.
+// Data for Where Should I Sit? and Occasion Matchmaker. Owned by the shell agent; reworked
+// 02/11/2026 so recommendations name real products at real venues.
+// The affinities in EVENT_PROFILES are our judgement, used only to order event types in the
+// Matchmaker, never a fact about a venue. No capacities, prices or distances here.
+// Football is staged only at Tottenham Hotspur Stadium.
 
-import { EVENT_TYPES, VENUES, AREAS } from './venues.js';
+import { EVENT_TYPES, VENUES, AREAS, venueById, areasFor } from './venues.js';
 
-export const PLANNABLE_EVENTS = EVENT_TYPES.filter((e) => e.id !== 'golf');
+export const PLANNABLE_EVENTS = EVENT_TYPES.slice();
 
-export const CATEGORY_LABEL = { sport: 'Sport', music: 'Music', arts: 'Arts and culture' };
+export const CATEGORY_LABEL = { sport: 'Sport', music: 'Music', arts: 'Arts & Culture' };
+
+// Where each event type is staged among the seven venues, from dev/research/seat-plans.json
+// ("staged"), limited to layouts the seat viewer can show. mode: the viewer layout used;
+// closest: true when the viewer shows the nearest layout rather than the event's own
+// (darts and comedy are shown with the concert or orchestra stage).
+export const STAGED_AT = {
+  football: [{ venue: 'tottenham-hotspur-stadium', mode: 'football' }],
+  nfl: [{ venue: 'tottenham-hotspur-stadium', mode: 'nfl' }],
+  'stadium-concert': [{ venue: 'tottenham-hotspur-stadium', mode: 'concert' }],
+  'arena-concert': [{ venue: 'the-arena-london', mode: 'concert' }, { venue: 'ao-arena', mode: 'concert' }, { venue: 'co-op-live', mode: 'concert' }],
+  boxing: [{ venue: 'the-arena-london', mode: 'boxing' }, { venue: 'ao-arena', mode: 'boxing' }, { venue: 'co-op-live', mode: 'boxing' }],
+  darts: [{ venue: 'the-arena-london', mode: 'concert', closest: true }, { venue: 'ao-arena', mode: 'concert', closest: true }],
+  comedy: [{ venue: 'the-arena-london', mode: 'concert', closest: true }, { venue: 'ao-arena', mode: 'concert', closest: true }, { venue: 'co-op-live', mode: 'concert', closest: true }, { venue: 'royal-albert-hall', mode: 'orchestra', closest: true }],
+  orchestra: [{ venue: 'royal-albert-hall', mode: 'orchestra' }],
+  'horse-racing': [{ venue: 'ascot-racecourse', mode: 'racing' }, { venue: 'cheltenham-racecourse', mode: 'racing' }],
+};
+export const stagedAt = (eventId) => (STAGED_AT[eventId] || []).filter((s) => venueById(s.venue));
+export const stagingFor = (eventId, venueId) => stagedAt(eventId).find((s) => s.venue === venueId) || null;
+// Real hospitality products for an event at a venue (and raceday).
+export function productsFor(eventId, venueId, day = null) {
+  const s = stagingFor(eventId, venueId);
+  if (!s) return [];
+  return areasFor(venueId, { mode: s.mode, day }).filter((a) => a.kind === 'hospitality');
+}
 
 export const BUDGETS = [
   { value: 'entry', label: 'Entry', level: 1, desc: 'Keep it sensible' },
@@ -21,7 +47,7 @@ export const budgetLevel = (v) => BUDGETS.find((b) => b.value === v)?.level ?? n
 // mode that best represents it.
 export function modeFor(eventId, archetype) {
   const map = {
-    stadium: { 'stadium-concert': 'concert' },
+    stadium: { 'stadium-concert': 'concert', nfl: 'nfl' },
     arena: { boxing: 'boxing' },
   };
   const fallback = { stadium: 'football', arena: 'concert', hall: 'orchestra', racecourse: 'racing' };
@@ -30,14 +56,13 @@ export function modeFor(eventId, archetype) {
 
 export const venuesFor = (archetype) => VENUES.filter((v) => v.archetype === archetype);
 
-// Regions used by the matchmaker, mapped to the cities in VENUES.
+// Regions used by the matchmaker, mapped to the cities in VENUES. Only regions with a venue
+// in these tools are offered; older links with other regions fall back to the whole UK.
 export const REGIONS = [
   { value: 'london', label: 'London', cities: ['London'] },
   { value: 'north-west', label: 'North West', cities: ['Manchester'] },
-  { value: 'midlands', label: 'Midlands', cities: [] },
-  { value: 'south', label: 'South', cities: ['Berkshire', 'Gloucestershire'] },
+  { value: 'south', label: 'South of England', cities: ['Berkshire', 'Gloucestershire'] },
   { value: 'uk', label: 'Anywhere in the UK', cities: null },
-  { value: 'europe', label: 'Europe', cities: [] },
 ];
 
 // Picks a venue for a preview: one in the chosen region when there is one.
@@ -46,6 +71,17 @@ export function pickVenue(archetype, regionValue) {
   const region = REGIONS.find((r) => r.value === regionValue);
   if (region?.cities?.length) {
     const hit = list.find((v) => region.cities.includes(v.city));
+    if (hit) return hit;
+  }
+  return list[0] || null;
+}
+
+// Picks a venue that stages this event type: one in the region when there is one.
+export function pickStaging(eventId, regionValue) {
+  const list = stagedAt(eventId);
+  const region = REGIONS.find((r) => r.value === regionValue);
+  if (region?.cities?.length) {
+    const hit = list.find((s) => region.cities.includes(venueById(s.venue)?.city));
     if (hit) return hit;
   }
   return list[0] || null;
@@ -121,7 +157,7 @@ export const LIKES = [
   { value: 'indoor', label: 'Indoor', icon: 'hall' },
   { value: 'sport', label: 'Sport', icon: 'trophy' },
   { value: 'music', label: 'Music', icon: 'music' },
-  { value: 'arts', label: 'Arts and culture', icon: 'sparkle' },
+  { value: 'arts', label: 'Arts & Culture', icon: 'sparkle' },
   { value: 'dining', label: 'Fine dining', icon: 'utensils' },
   { value: 'relaxed', label: 'Relaxed pace', icon: 'clock' },
   { value: 'thrill', label: 'Thrill seeking', icon: 'zap' },

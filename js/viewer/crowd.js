@@ -63,11 +63,22 @@ function bodyGeometry({ seated, detail }) {
       });
     }
   } else {
-    const torso = new THREE.BoxGeometry(0.4, shoulder - hip + 0.04, 0.24); P.push(tag(T(torso, 0, (hip + shoulder) / 2, 0), PART.CLOTH));
-    const head = new THREE.IcosahedronGeometry(0.115, 0); head.scale(0.95, 1.1, 1); P.push(tag(T(head, 0, headY, 0), PART.SKIN));
-    const hair = new THREE.BoxGeometry(0.2, 0.08, 0.2); P.push(tag(T(hair, 0, headY + 0.08, -0.02), PART.HAIR));
-    if (!seated) { const legs = new THREE.BoxGeometry(0.3, hip, 0.18); P.push(tag(T(legs, 0, hip / 2, 0), PART.LEGS)); }
-    else { const lap = new THREE.BoxGeometry(0.32, 0.14, 0.36); P.push(tag(T(lap, 0, hip, 0.16), PART.LEGS)); }
+    // Far body: still a humanoid (head, neck, tapered torso, shoulders, arms, legs), in very
+    // few triangles, so mid-distance crowds read as people rather than blocks.
+    const torso = new THREE.CylinderGeometry(0.19, 0.15, shoulder - hip + 0.04, 6, 1, false); torso.scale(1, 1, 0.6);
+    P.push(tag(T(torso, 0, (hip + shoulder) / 2, 0), PART.CLOTH));
+    const sh = new THREE.CylinderGeometry(0.205, 0.19, 0.08, 6, 1, false); sh.scale(1, 1, 0.62); P.push(tag(T(sh, 0, shoulder - 0.02, 0), PART.CLOTH));
+    const head = new THREE.SphereGeometry(0.105, 6, 4); head.scale(0.92, 1.12, 1); P.push(tag(T(head, 0, headY, 0.01), PART.SKIN));
+    const hair = new THREE.SphereGeometry(0.11, 6, 2, 0, Math.PI * 2, 0, Math.PI * 0.5); hair.scale(0.94, 1.05, 1.02); P.push(tag(T(hair, 0, headY + 0.012, -0.012), PART.HAIR));
+    [-1, 1].forEach((s) => {
+      const arm = new THREE.BoxGeometry(0.075, 0.5, 0.085); P.push(tag(T(arm, s * 0.225, shoulder - 0.27, seated ? 0.05 : 0), PART.ARM));
+    });
+    if (!seated) {
+      [-1, 1].forEach((s) => { const leg = new THREE.BoxGeometry(0.12, hip, 0.13); P.push(tag(T(leg, s * 0.09, hip / 2, 0), PART.LEGS)); });
+    } else {
+      const lap = new THREE.BoxGeometry(0.32, 0.13, 0.4); P.push(tag(T(lap, 0, hip, 0.17), PART.LEGS));
+      const shins = new THREE.BoxGeometry(0.28, 0.42, 0.11); P.push(tag(T(shins, 0, 0.22, 0.37), PART.LEGS));
+    }
   }
   const g = mergeGeometries(P);
   g.userData = { shoulder, hip };
@@ -79,6 +90,9 @@ function bodyGeometry({ seated, detail }) {
 const SKIN = ['#f1c7a6', '#e0ac8a', '#c98e69', '#a8714f', '#7d5038', '#5a3826', '#ecc2a0', '#d39d7a'];
 const HAIR = ['#1b1512', '#2c1f17', '#3d2a1c', '#5a3e28', '#8b6a44', '#b89466', '#6e6e6e', '#c9c4bc', '#1a1a1a'];
 export const PALETTES = {
+  // Everyday mixed clothing: the default for any crowd that names no palette.
+  neutral: ['#121418', '#1f2633', '#2a2f3a', '#3a3f4a', '#5c6670', '#c9ccd1', '#e9e4da', '#4a3b2f', '#6b5b4a', '#2d3e55', '#7a2f2f', '#2f5a4a', '#8a8f96'],
+  // Home and away colours: Tottenham Hotspur Stadium's football mode only.
   football: ['#f4f4f2', '#0f1d3a', '#1a2a55', '#f4f4f2', '#0f1d3a', '#2a2f3a', '#3a3f4a', '#8a1c25', '#5c6670', '#c9ccd1', '#1f3d6b', '#121418', '#6b5b4a'],
   away: ['#b5202f', '#f4f4f2', '#8a1c25', '#b5202f', '#121418', '#2a2f3a'],
   concert: ['#121418', '#1c1f26', '#2a2f3a', '#0f1d3a', '#3a3f4a', '#5c6670', '#f4f4f2', '#8a1c25', '#2d6fe0', '#c79a55', '#6b5b4a', '#262626', '#7a2f5a'],
@@ -137,6 +151,13 @@ float upper = step(uSeated * 0.5 + 0.2, transformed.y);
 transformed.y += wv * 0.55 * uSeated * upper;
 transformed.y += uIdle * upper * sin(uTime * 1.6 + iP.x * 6.2832) * 0.012;
 transformed.x += uIdle * sin(uTime * 0.8 + iP.x * 12.0) * 0.03 * (transformed.y / 1.7);
+// Idle head turns: now and then a figure looks to one side (the head and hair only).
+if (aPart > 0.5 && aPart < 2.5 && transformed.y > uShoulder + 0.06) {
+  float look = uIdle * 0.45 * smoothstep(0.6, 1.0, sin(uTime * 0.21 + iP.x * 40.0));
+  float cs = cos(look); float sn = sin(look);
+  vec2 hz = vec2(transformed.x, transformed.z);
+  transformed.x = hz.x * cs - hz.y * sn; transformed.z = hz.x * sn + hz.y * cs;
+}
 transformed.y += uBounce * (1.0 - uSeated) * abs(sin(uTime * uBeat * 0.5 + iP.x * 3.14)) * 0.07;
 transformed *= keep;
 vec3 trousers = iCloth * 0.22 + vec3(0.035, 0.04, 0.05);
@@ -162,7 +183,8 @@ vPC = mix(vPC, vPC * 1.5 + 0.1, wv * 0.7);`);
     const m = new THREE.Matrix4(); const q = new THREE.Quaternion(); const p = new THREE.Vector3(); const s = new THREE.Vector3(); const up = new THREE.Vector3(0, 1, 0);
     const palCache = {};
     this.items.forEach((it, k) => {
-      const pal = palCache[it.palette || 'football'] || (palCache[it.palette || 'football'] = (PALETTES[it.palette] || PALETTES.football).map(hex));
+      const pk = PALETTES[it.palette] ? it.palette : 'neutral';
+      const pal = palCache[pk] || (palCache[pk] = PALETTES[pk].map(hex));
       const h = 0.9 + R() * 0.2;
       const wdt = 0.9 + R() * 0.2;
       p.set(it.x, it.y, it.z); q.setFromAxisAngle(up, it.yaw + (R() - 0.5) * 0.35); s.set(wdt, h, wdt);

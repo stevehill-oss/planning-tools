@@ -1,5 +1,7 @@
-// Arena archetype: an illustrative enclosed oval bowl, not a model of any real venue.
-// Lower tier, a ring of glass-fronted suites with seats out front, a steep upper tier,
+// Arena builder: The Arena London, AO Arena and Co-op Live, each from its own layout in
+// js/viewer/layouts.js (block numbers, levels and stage end from the research; bowl size,
+// rows and heights modelled). Lower tier, a band of front seats with glass suites behind,
+// a steep upper tier,
 // a dark roof with rigging, a centre-hung screen cluster, and two modes:
 //   concert  end stage at +x with LED wall, light rig and beams, standing floor crowd
 //   boxing   a lit ring at the centre with ropes, posts and an overhead ring light,
@@ -7,8 +9,9 @@
 // Module contract: see the header of stadium.js.
 
 import * as THREE from 'three';
-import { LAYOUTS, rowY, tierBackD } from '../layouts.js';
-import { hidePartitions, sweep, buildTier, stepsMesh, vomMeshes, SeatField, instanced, yawFacing } from '../bowl.js';
+import { rowY, tierBackD, tierBuildOpts } from '../layouts.js';
+import { seatStyleFor } from '../seatplan.js';
+import { hidePartitions, sweep, buildTier, stepsMesh, vomMeshes, SeatField, instanced, yawFacing, arcSamples } from '../bowl.js';
 import { Crowd, fillFloor } from '../crowd.js';
 import * as TX from '../textures.js';
 import { createStage } from './stage.js';
@@ -17,7 +20,7 @@ const up = new THREE.Vector3(0, 1, 0);
 
 export async function build(ctx) {
   const { renderer, mode, lowPower } = ctx;
-  const L = LAYOUTS.arena;
+  const L = ctx.layout;
   const ring = L.ring;
   const boxing = mode === 'boxing';
   const root = new THREE.Group(); root.name = 'arena';
@@ -48,11 +51,15 @@ export async function build(ctx) {
   floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; root.add(floor);
 
   /* ---------- Tiers ---------- */
-  const radials = ring.radials({ straightEvery: 7, cornerSplits: 4 });
+  // Aisles at the block edges of js/data/seatmaps.js, so these are the seat map's seats.
+  const opt = (id) => tierBuildOpts(L, id);
+  const radials = opt('upper').radials(0);
   const lt = L.tiers.lower; const ut = L.tiers.upper; const S = L.suite;
   const seatCol = [0.11, 0.09, 0.12];
-  const premiumZone = (s) => s.z < -10 && s.row >= 2 && s.row <= 13;
-  const lower = buildTier(ring, lt, { radials, seed: 3, frontBase: 0, vom: { every: 3, rows: [7, 9] }, padded: premiumZone, seatColor: (s) => (premiumZone(s) ? [0.07, 0.07, 0.08] : seatCol) });
+  // Padded only where a product's seat type says so (stated); no armrests are stated here.
+  const style = seatStyleFor(L.venueId, mode);
+  const padded = (s) => style(s).padded; const arms = (s) => style(s).arms;
+  const lower = buildTier(ring, lt, { ...opt('lower'), seed: 3, frontBase: 0, padded, arms, seatColor: (s) => (padded(s) ? [0.07, 0.07, 0.08] : seatCol) });
   const lowerMesh = new THREE.Mesh(lower.concrete, M.concrete); lowerMesh.castShadow = true; lowerMesh.receiveShadow = true; root.add(lowerMesh);
   root.add(stepsMesh(lower.steps, M.step));
   root.add(vomMeshes(lower.vomBlocks, M.concrete, M.dark));
@@ -62,8 +69,8 @@ export async function build(ctx) {
   const ribbonMat = keep(new THREE.MeshBasicMaterial({ map: ribbonTex, color: new THREE.Color(1, 1, 1) }));
   root.add(new THREE.Mesh(keep(sweep(ring, [[lt.d0 - 0.03, 0.15], [lt.d0 - 0.03, lt.y0 - 0.1]], { uScale: 40, vScale: lt.y0 - 0.25, uFlip: true })), ribbonMat));
 
-  const suiteSeats = { id: 'suite-seats', d0: S.d0, rows: 2, depth: (S.glassD - S.d0) / 2, y0: S.seatY[0], rise: S.seatY[1] - S.seatY[0], curve: 0 };
-  const suites = buildTier(ring, suiteSeats, { radials, seed: 6, frontBase: rowY(lt, lt.rows - 1), padded: () => true, seatColor: () => [0.18, 0.15, 0.13] });
+  const suiteSeats = L.tiers.band;
+  const suites = buildTier(ring, suiteSeats, { ...opt('band'), seed: 6, frontBase: rowY(lt, lt.rows - 1), padded, arms, seatColor: () => [0.18, 0.15, 0.13] });
   const suitesMesh = new THREE.Mesh(suites.concrete, M.concrete); suitesMesh.castShadow = true; suitesMesh.receiveShadow = true; root.add(suitesMesh);
   root.add(new THREE.Mesh(keep(sweep(ring, [[S.glassD, S.seatY[1]], [S.glassD, S.floorY], [S.backD, S.floorY]])), M.carpet));
   const sg = new THREE.Mesh(keep(sweep(ring, [[S.glassD, S.floorY], [S.glassD, S.glassTop]])), M.glass); sg.renderOrder = 2; root.add(sg);
@@ -78,7 +85,8 @@ export async function build(ctx) {
   root.add(partMesh);
   const partY = S.floorY;
 
-  const upper = buildTier(ring, ut, { radials, seed: 8, frontBase: S.glassTop + 0.15, backWall: L.roofY - rowY(ut, ut.rows - 1), vom: { every: 3, rows: [6, 8] }, seatColor: () => seatCol });
+  const terraces = L.terraces || [];
+  const upper = buildTier(ring, ut, { ...opt('upper'), seed: 8, frontBase: S.glassTop + 0.15, backWall: terraces.length ? 0.6 : L.roofY - rowY(ut, ut.rows - 1), padded, arms, seatColor: () => seatCol });
   const upperMesh = new THREE.Mesh(upper.concrete, M.concrete); upperMesh.castShadow = true; upperMesh.receiveShadow = true; root.add(upperMesh);
   root.add(stepsMesh(upper.steps, M.step));
   root.add(vomMeshes(upper.vomBlocks, M.concrete, M.dark));
@@ -94,8 +102,27 @@ export async function build(ctx) {
     const d = r.b.clone().sub(r.a); P.copy(r.a).addScaledVector(d, 0.5); q.setFromUnitVectors(up, d.clone().normalize()); sc.set(1, d.length(), 1);
   }));
 
+  /* ---------- Level 4 terraces (Co-op Live: lounges on the north and south sides, stated) ---------- */
+  if (terraces.length) {
+    const topY = rowY(ut, ut.rows - 1) + 0.5; const tD = tierBackD(ut) + 0.3;
+    const Lr = ring.length(0);
+    // Back wall to the roof everywhere except the terrace arcs, where a glazed lounge sits instead.
+    const arcs = terraces.map((t) => t.arc).sort((a, b) => a[0] - b[0]);
+    const gaps = []; let cur = arcs[arcs.length - 1][1] - Lr;
+    arcs.forEach((a) => { gaps.push([cur, a[0]]); cur = a[1]; });
+    gaps.forEach(([a, b]) => { if (b - a > 1) root.add(new THREE.Mesh(keep(sweep(ring, [[tierBackD(ut), rowY(ut, ut.rows - 1)], [tierBackD(ut), L.roofY]], { samples: arcSamples(ring, a, b, 0, 2) })), M.wall)); });
+    terraces.forEach((t) => {
+      const S2 = arcSamples(ring, t.arc[0], t.arc[1], 0, 1.5);
+      const sw = (prof, mat) => { const m = new THREE.Mesh(keep(sweep(ring, prof, { samples: S2 })), mat); m.receiveShadow = true; root.add(m); return m; };
+      sw([[tierBackD(ut) - 0.1, rowY(ut, ut.rows - 1)], [tierBackD(ut) - 0.1, topY], [tD + 5.5, topY]], M.carpet);
+      sw([[tD + 0.05, topY], [tD + 0.05, topY + 1.05]], M.glass).renderOrder = 2;
+      sw([[tD + 3.6, topY], [tD + 3.6, L.roofY]], M.glass).renderOrder = 2;
+      sw([[tD + 5.5, topY], [tD + 5.5, L.roofY]], M.suite);
+    });
+  }
+
   /* ---------- Roof, walls, rigging ---------- */
-  const outerD = tierBackD(ut) + 0.6;
+  const outerD = tierBackD(ut) + (terraces.length ? 6.2 : 0.6);
   const roofGroup = new THREE.Group(); roofGroup.name = 'arena-roof';
   const extent = { x: ring.hx + outerD + 2, z: ring.hz + outerD + 2 };
   const roof = new THREE.Mesh(keep(new THREE.PlaneGeometry(extent.x * 2, extent.z * 2)), M.roof);
@@ -232,7 +259,7 @@ export async function build(ctx) {
     if (!boxing && s.x > L.stage.frontX + 1 && Math.abs(s.z) < 40) return; // behind the stage: not sold
     if (lowPower && R() < 0.35) return;
     const kv = R();
-    crowd.add({ x: s.x, y: s.y, z: s.z, yaw: yawFacing(-s.nx, -s.nz), seated: true, angle: s.angle, palette: s.padded || s.tier === 'suite-seats' ? 'smart' : 'concert', keep: s.tier === 'suite-seats' ? kv * 1.5 : kv, armsUp: !boxing && R() < 0.1 ? 0.5 : 0 });
+    crowd.add({ x: s.x, y: s.y, z: s.z, yaw: yawFacing(-s.nx, -s.nz), seated: true, angle: s.angle, palette: s.padded || s.tier === 'band' ? 'smart' : 'concert', keep: s.tier === 'band' ? kv * 1.5 : kv, armsUp: !boxing && R() < 0.1 ? 0.5 : 0 });
   });
   crowd.finalize();
   root.add(crowd.group);
@@ -242,7 +269,7 @@ export async function build(ctx) {
     root, crowd, seats, indoor: true,
     setViewer: (pos) => hidePartitions(partMesh, partitions, partY, pos),
     bounds: { center: new THREE.Vector3(0, 10, 0), radius: 78 },
-    overview: { position: new THREE.Vector3(-44, 118, 78), target: new THREE.Vector3(boxing ? 0 : 6, 0, 0), minDistance: 40, maxDistance: 220 },
+    overview: { position: new THREE.Vector3(...L.overview.position), target: new THREE.Vector3(boxing ? 0 : 6, 0, 0), minDistance: 40, maxDistance: 260 },
     // Overview lifts the roof off (a cutaway), seat view puts it back.
     setView(v) { view = v; roofGroup.visible = v !== 'overview'; roof.visible = v !== 'overview'; },
     setMood(m, info) {

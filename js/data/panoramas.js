@@ -1,5 +1,9 @@
 // Real 360 degree seat photos for the Seat Reality Viewer.
 //
+// Since 02/11/2026 every kind of real capture (360 photos, splat scans, Matterport lounge
+// tours) goes in js/data/captures.js. Entries here still work: captures.js reads them as
+// 360 photos. New photos can go in either file.
+//
 // Each entry is keyed "<venue id>/<area id>" (all event modes) or
 // "<venue id>/<area id>/<mode id>" (one mode only, checked first). Ids come from
 // js/data/venues.js. When an area has a photo, the seat view opens on the photo, with a
@@ -18,9 +22,13 @@
 //               faces the action (0 = the middle of the image, negative turns left)
 //   pitch       optional, degrees up (positive) or down (negative) for the first view
 //
+// Area ids are the real product and seating-area ids in VENUE_AREAS (js/data/venues.js),
+// for example tunnel-club, grand-tier-box, the-vista. Older ids (premium-lounge and so on)
+// are resolved through AREA_ALIASES before this lookup, so key entries by the new ids.
+//
 // Example (copy, then change every value):
-//   'tottenham-hotspur-stadium/premium-lounge': {
-//     src: 'assets/360/tottenham-hotspur-stadium/premium-lounge.jpg',
+//   'tottenham-hotspur-stadium/tunnel-club': {
+//     src: 'assets/360/tottenham-hotspur-stadium/tunnel-club.jpg',
 //     credit: 'Prestige Corporate Events',
 //     takenOn: '14/03/2027',
 //     permission: 'Taken by Steve Hill on a site visit, venue permission by email 01/03/2027',

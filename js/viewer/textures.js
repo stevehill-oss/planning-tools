@@ -45,8 +45,8 @@ export function concrete(renderer, base = [150, 150, 146]) {
   return tex(c, { repeat: true, renderer });
 }
 
-/* The football pitch, including the grass surround out to the stand fronts.
-   Covers w x h metres centred on the pitch. */
+/* Tottenham Hotspur Stadium's grass pitch (football mode only), including the grass
+   surround out to the stand fronts. Covers w x h metres centred on the pitch. */
 export function pitch(renderer, { w = 124, h = 88, pitchW = 105, pitchH = 68 } = {}) {
   const PX = 18; // pixels per metre
   const W = Math.round(w * PX); const H = Math.round(h * PX);
@@ -113,6 +113,72 @@ export function pitch(renderer, { w = 124, h = 88, pitchW = 105, pitchH = 68 } =
   return t;
 }
 
+/* NFL field on the synthetic surface (Tottenham Hotspur Stadium only). Covers w x h metres
+   centred on the field. N: { hx, hz, endZone, hashZ, yd } from layouts.js (NFL rulebook:
+   120 x 53 1/3 yards including the end zones, hash marks 70 ft 9 in from each sideline).
+   Neutral: no team names, logos or sponsor marks. Number placement and the team areas'
+   extent are modelled. Canvas x is world x and canvas y is world z. */
+export function nflField(renderer, { w, h, N }) {
+  const PX = 18;
+  const W = Math.round(w * PX); const H = Math.round(h * PX);
+  const [c, g] = canvas(W, H);
+  const r = rng(23);
+  const X = (x) => (x + w / 2) * PX; const Z = (z) => (z + h / 2) * PX; const m = (v) => v * PX;
+  const yd = N.yd; const gl = N.hx - N.endZone; const border = 6 * 0.3048;
+  // The artificial surface round the field, then the white border outside the field lines.
+  g.fillStyle = '#2b5631'; g.fillRect(0, 0, W, H);
+  // Team areas behind each sideline, near the middle of the field (extent modelled).
+  g.fillStyle = '#284a2e';
+  // Benches stand at least 30 ft back from the sideline (rulebook), so the strip reaches past that.
+  const teamD = 30 * 0.3048 + 1.6 - border - 0.5;
+  [-1, 1].forEach((sd) => { const z0 = sd > 0 ? N.hz + border + 0.5 : -N.hz - border - 0.5 - teamD; g.fillRect(X(-30 * yd), Z(z0), m(60 * yd), m(teamD)); });
+  g.fillStyle = '#f2f2ee'; g.fillRect(X(-N.hx - border), Z(-N.hz - border), m(2 * (N.hx + border)), m(2 * (N.hz + border)));
+  // Field: synthetic turf with faint 5-yard tonal bands, darker neutral end zones.
+  for (let k = 0; k < 20; k++) {
+    g.fillStyle = k % 2 ? '#3a7a3d' : '#357238';
+    g.fillRect(X(-gl + k * 5 * yd), Z(-N.hz), m(5 * yd) + 1, m(2 * N.hz));
+  }
+  g.fillStyle = '#2e6233';
+  g.fillRect(X(-N.hx), Z(-N.hz), m(N.endZone), m(2 * N.hz)); g.fillRect(X(gl), Z(-N.hz), m(N.endZone), m(2 * N.hz));
+  // Fibre noise.
+  const img = g.getImageData(0, 0, W, H);
+  for (let i = 0; i < img.data.length; i += 4) { const n = (r() - 0.5) * 12; img.data[i] += n * 0.5; img.data[i + 1] += n; img.data[i + 2] += n * 0.5; }
+  g.putImageData(img, 0, 0);
+  // Markings, 4 inches wide.
+  const lw = 0.1016; g.fillStyle = 'rgba(246,246,242,0.96)';
+  const vline = (x, z0, z1) => g.fillRect(X(x) - m(lw) / 2, Z(z0), m(lw), m(z1 - z0));
+  for (let k = 0; k <= 20; k++) vline(-gl + k * 5 * yd, -N.hz, N.hz); // goal lines and 5-yard lines
+  // One-yard marks: at the sidelines and on the hash lines (2 ft long).
+  const tick = 0.6096;
+  for (let k = 1; k < 100; k++) {
+    if (k % 5 === 0) continue;
+    const x = -gl + k * yd;
+    vline(x, -N.hz + 0.1, -N.hz + 0.1 + tick); vline(x, N.hz - 0.1 - tick, N.hz - 0.1);
+    vline(x, -N.hashZ - tick / 2, -N.hashZ + tick / 2); vline(x, N.hashZ - tick / 2, N.hashZ + tick / 2);
+  }
+  // Short line at each 2-yard line for the try (1 yard long).
+  [-1, 1].forEach((sd) => vline(sd * (gl - 2 * yd), -yd / 2, yd / 2));
+  // Yard numbers every 10 yards, bottoms towards the nearest sideline, with arrows to the
+  // nearer goal line (modelled placement).
+  const numH = 6 * 0.3048;
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.font = `700 ${Math.round(m(numH) * 1.15)}px "League Spartan", Arial, sans-serif`;
+  for (let k = 1; k <= 9; k++) {
+    const x = -gl + k * 10 * yd; const v = k <= 5 ? k * 10 : (10 - k) * 10;
+    [-1, 1].forEach((sd) => {
+      const z = sd * (N.hz - 12 * yd);
+      g.save(); g.translate(X(x), Z(z)); if (sd < 0) g.rotate(Math.PI);
+      g.fillText(String(v), 0, 0);
+      if (v !== 50) {
+        const dir = (x < 0 ? -1 : 1) * (sd < 0 ? -1 : 1); const ax = dir * m(1.55); const s = m(0.35);
+        g.beginPath(); g.moveTo(ax + dir * s * 1.2, -m(numH) * 0.32); g.lineTo(ax, -m(numH) * 0.32 - s * 0.6); g.lineTo(ax, -m(numH) * 0.32 + s * 0.6); g.closePath(); g.fill();
+      }
+      g.restore();
+    });
+  }
+  return tex(c, { renderer, aniso: 16 });
+}
+
 /* Dark composite floor panels that cover the pitch for a concert. */
 export function floorPanels(renderer) {
   const [c, g] = canvas(512, 512);
@@ -139,24 +205,37 @@ export function arenaFloor(renderer) {
   return tex(c, { repeat: true, renderer });
 }
 
-/* LED advertising board loop. Brand-safe messages only. */
-export function ledBoards(renderer, kind = 'football') {
+/* LED board loop. Neutral, unbranded messages only: no venue, sponsor or company names. */
+// kind: 'football' (Tottenham Hotspur Stadium's football mode only), 'nfl', 'boxing',
+// 'concert' or 'neutral' (the default).
+export function ledBoards(renderer, kind = 'neutral') {
   const W = 2048; const H = 64;
   const [c, g] = canvas(W, H);
+  const sport = kind === 'football' || kind === 'nfl';
   const panels = [
-    { bg: ['#07111F', '#182A42'], fg: '#D8AE68', text: 'PRESTIGE CORPORATE EVENTS', font: 700 },
-    { bg: ['#0E9384', '#0B6E64'], fg: '#FFFFFF', text: kind === 'football' ? 'WELCOME TO MATCHDAY' : kind === 'boxing' ? 'FIGHT NIGHT' : 'WELCOME', font: 700 },
-    { bg: ['#F4EFE6', '#E8D6B3'], fg: '#0F1D30', text: 'HOSPITALITY', font: 800 },
-    { bg: ['#2D6FE0', '#1C4FAF'], fg: '#FFFFFF', text: kind === 'football' ? 'ENJOY THE GAME' : 'ENJOY THE SHOW', font: 700 },
+    { bg: ['#0B1727', '#14243A'], fg: '#C9D3E0', text: kind === 'football' ? 'WELCOME TO MATCHDAY' : kind === 'boxing' ? 'FIGHT NIGHT' : 'WELCOME', font: 700 },
+    { bg: ['#123A4A', '#0D2C38'], fg: '#FFFFFF', text: '', font: 700 },
+    { bg: ['#1E2B3C', '#2A3A50'], fg: '#E6EBF2', text: sport ? 'ENJOY THE GAME' : kind === 'neutral' ? 'ENJOY YOUR DAY' : 'ENJOY THE SHOW', font: 700 },
+    { bg: ['#30251A', '#3D2E1F'], fg: '#FFFFFF', text: '', font: 700 },
   ];
   const pw = W / panels.length;
   panels.forEach((p, i) => {
     const grd = g.createLinearGradient(i * pw, 0, (i + 1) * pw, H);
     grd.addColorStop(0, p.bg[0]); grd.addColorStop(1, p.bg[1]);
     g.fillStyle = grd; g.fillRect(i * pw, 0, pw, H);
-    g.fillStyle = p.fg; g.font = `${p.font} 34px "League Spartan", Arial, sans-serif`;
-    g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillText(p.text, i * pw + pw / 2, H / 2 + 2);
+    if (p.text) {
+      g.fillStyle = p.fg; g.font = `${p.font} 34px "League Spartan", Arial, sans-serif`;
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(p.text, i * pw + pw / 2, H / 2 + 2);
+    } else {
+      // An abstract chevron pattern in place of advertising.
+      g.save(); g.beginPath(); g.rect(i * pw, 0, pw, H); g.clip();
+      g.fillStyle = 'rgba(255,255,255,0.14)';
+      for (let x = i * pw - H; x < (i + 1) * pw; x += 28) {
+        g.beginPath(); g.moveTo(x, 0); g.lineTo(x + 12, 0); g.lineTo(x + 12 + H / 2, H / 2); g.lineTo(x + 12, H); g.lineTo(x, H); g.lineTo(x + H / 2, H / 2); g.closePath(); g.fill();
+      }
+      g.restore();
+    }
   });
   // LED pixel grid.
   g.fillStyle = 'rgba(0,0,0,0.22)';
@@ -168,20 +247,22 @@ export function ledBoards(renderer, kind = 'football') {
 }
 
 /* Big screen content (static image, illustrative). */
-export function bigScreen(renderer, kind = 'football') {
+// kind: 'football' (Tottenham's football mode only), 'nfl', or anything else for a neutral
+// abstract show screen.
+export function bigScreen(renderer, kind = 'neutral') {
   const [c, g] = canvas(512, 288);
   const grd = g.createLinearGradient(0, 0, 512, 288);
   grd.addColorStop(0, '#0B1727'); grd.addColorStop(1, '#182A42');
   g.fillStyle = grd; g.fillRect(0, 0, 512, 288);
   g.textAlign = 'center'; g.textBaseline = 'middle';
-  if (kind === 'football') {
+  if (kind === 'football' || kind === 'nfl') {
     g.fillStyle = '#D8AE68'; g.font = '700 30px "League Spartan", Arial, sans-serif';
     g.fillText('HOME', 140, 110); g.fillText('AWAY', 372, 110);
     g.fillStyle = '#ffffff'; g.font = '800 96px "League Spartan", Arial, sans-serif';
     g.fillText('0', 140, 190); g.fillText('0', 372, 190);
     g.font = '600 40px "League Spartan", Arial, sans-serif'; g.fillStyle = '#A9B3C2';
     g.fillText(':', 256, 185);
-    g.font = '600 24px Arial, sans-serif'; g.fillStyle = '#E8D6B3'; g.fillText('KICK OFF', 256, 60);
+    g.font = '600 24px Arial, sans-serif'; g.fillStyle = '#E8D6B3'; g.fillText(kind === 'nfl' ? '1ST QUARTER' : 'KICK OFF', 256, 60);
   } else {
     const r = rng(3);
     for (let k = 0; k < 28; k++) {

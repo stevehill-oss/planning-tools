@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Hospitality Planning Tools | Prestige Corporate Events</title>
-<meta name="description" content="Five planning tools from Prestige Corporate Events: find where to sit, preview the view from your seat, weigh up a hospitality package, match an event to your occasion and build a business case.">
+<meta name="description" content="Six planning tools from Prestige Corporate Events: find where to sit, check every venue's verified facts, preview the view from your seat, weigh up a hospitality package, match an event to your occasion and build a business case.">
 <meta name="theme-color" content="#07111F">
 <meta property="og:title" content="Hospitality Planning Tools | Prestige Corporate Events">
 <meta property="og:description" content="Find where to sit, preview the view and weigh up hospitality before you book.">
@@ -22,6 +22,7 @@
 <link rel="stylesheet" href="css/tool-vip-worth.css">
 <link rel="stylesheet" href="css/tool-occasion-matchmaker.css">
 <link rel="stylesheet" href="css/tool-corporate-roi.css">
+<link rel="stylesheet" href="css/tool-venue-guide.css">
 <link rel="stylesheet" href="css/print.css" media="print">
 <script type="importmap">{"imports":{"three":"./vendor/three/build/three.module.min.js","three/addons/":"./vendor/three/examples/jsm/"}}</script>
 <script src="vendor/gsap/gsap.min.js" defer></script>
@@ -36,14 +37,14 @@
       "acceptedAnswer": { "@type": "Answer", "text": "No. The Seat Reality Viewer is an illustrative 3D model that shows the kind of view each area gives, not an exact rendering of a venue. A hospitality specialist confirms the exact seats and what you will see before you book." } },
     { "@type": "Question", "name": "Do I need an account to use the tools?",
       "acceptedAnswer": { "@type": "Answer", "text": "No. Every tool works straight away with no login. Your brief is kept in this browser only." } },
-    { "@type": "Question", "name": "Are the scores facts?",
-      "acceptedAnswer": { "@type": "Answer", "text": "No. View, sound, comfort and atmosphere scores are indicative opinions for comparing one area with another. They are not measurements and can differ from venue to venue." } },
+    { "@type": "Question", "name": "Where do the venue facts come from?",
+      "acceptedAnswer": { "@type": "Answer", "text": "From the venues themselves, their architects, planning documents and published access surveys, each labelled stated or measured with its source. No venue publishes its seat sizes, so those are UK and FIFA design standards. Anything we worked out ourselves is labelled modelled." } },
     { "@type": "Question", "name": "Do the calculators use your prices?",
-      "acceptedAnswer": { "@type": "Answer", "text": "No. The calculators use the figures you type in. Any example figures are illustrative and clearly labelled, not quotes. A specialist gives you real prices for your date and group." } },
+      "acceptedAnswer": { "@type": "Answer", "text": "No. The calculators only use figures you type in, and nothing is filled in for you. A specialist gives you real prices for your date and group." } },
     { "@type": "Question", "name": "Can I share my results?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Yes. Every result has its own link that opens the tool with your answers filled in, and you can collect results in My brief to copy, print or send to a specialist." } },
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes. Every result has its own link that opens the tool with your answers filled in, and you can collect results in My brief to copy, print or take to a specialist." } },
     { "@type": "Question", "name": "How do I book?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Speak to a hospitality specialist on 0333 305 5377, or send your brief from any tool and a specialist will talk through dates, seats and packages with you." } }
+      "acceptedAnswer": { "@type": "Answer", "text": "Speak to a hospitality specialist on 0333 305 5377. From any tool you can copy your brief and open the matching page on our website to make your enquiry there." } }
   ]
 }
 </script>
@@ -53,21 +54,22 @@
 
 <header class="site-header" id="site-header">
   <div class="container site-header__inner">
-    <a class="site-header__logo" href="https://prestigecorporateevents.com/" aria-label="Prestige Corporate Events home">
+    <a class="site-header__logo" href="https://prestigecorporateevents.com/" data-out="header" aria-label="Prestige Corporate Events home">
       <img src="assets/logo-dark.png" width="600" height="146" alt="Prestige Corporate Events">
     </a>
     <nav class="site-nav" aria-label="Main">
       <ul>
-        <li><a href="https://prestigecorporateevents.com/arts-culture">Art and Culture</a></li>
-        <li><a href="https://prestigecorporateevents.com/music">Music</a></li>
-        <li><a href="https://prestigecorporateevents.com/sport">Sport</a></li>
-        <li><a href="https://prestigecorporateevents.com/contact">Contact</a></li>
+        <li><a href="https://prestigecorporateevents.com/arts-culture" data-out="header">Arts &amp; Culture</a></li>
+        <li><a href="https://prestigecorporateevents.com/music" data-out="header">Music</a></li>
+        <li><a href="https://prestigecorporateevents.com/sport" data-out="header">Sport</a></li>
+        <li><a href="https://prestigecorporateevents.com/contact" data-out="header">Contact</a></li>
+        <li><a href="#venue-guide" data-tool-link="venue-guide">Venue guide</a></li>
         <li><a href="#tools-section" aria-current="page">Planning tools</a></li>
       </ul>
     </nav>
     <div class="site-header__actions">
       <a class="site-header__phone" href="tel:+443333055377"><svg class="icon" aria-hidden="true"><use href="#i-phone"></use></svg><span>0333 305 5377</span></a>
-      <a class="btn btn--gold btn--sm site-header__cta" href="https://prestigecorporateevents.com/">Find experiences</a>
+      <a class="btn btn--gold btn--sm site-header__cta" href="https://prestigecorporateevents.com/" data-out="header" data-out-content="header-find-experiences">Find experiences</a>
       <button type="button" class="brief-btn" id="brief-btn" data-open-brief aria-label="My brief, no items">
         <svg class="icon" aria-hidden="true"><use href="#i-bookmark"></use></svg>
         <span class="brief-btn__label">My brief</span>
@@ -87,15 +89,16 @@
   </div>
   <nav aria-label="Mobile">
     <ul class="sheet__nav">
-      <li><a href="https://prestigecorporateevents.com/arts-culture">Art and Culture</a></li>
-      <li><a href="https://prestigecorporateevents.com/music">Music</a></li>
-      <li><a href="https://prestigecorporateevents.com/sport">Sport</a></li>
-      <li><a href="https://prestigecorporateevents.com/contact">Contact</a></li>
+      <li><a href="https://prestigecorporateevents.com/arts-culture" data-out="menu">Arts &amp; Culture</a></li>
+      <li><a href="https://prestigecorporateevents.com/music" data-out="menu">Music</a></li>
+      <li><a href="https://prestigecorporateevents.com/sport" data-out="menu">Sport</a></li>
+      <li><a href="https://prestigecorporateevents.com/contact" data-out="menu">Contact</a></li>
+      <li><a href="#venue-guide" data-tool-link="venue-guide" data-close>Venue guide</a></li>
       <li><a href="#tools-section" aria-current="page" data-close>Planning tools</a></li>
     </ul>
   </nav>
   <div class="sheet__actions">
-    <a class="btn btn--gold btn--block" href="https://prestigecorporateevents.com/">Find experiences</a>
+    <a class="btn btn--gold btn--block" href="https://prestigecorporateevents.com/" data-out="menu" data-out-content="menu-find-experiences">Find experiences</a>
     <button type="button" class="btn btn--ink btn--block" data-open-brief data-close><svg class="icon" aria-hidden="true"><use href="#i-bookmark"></use></svg><span>My brief</span></button>
     <a class="btn btn--ghost btn--block" href="tel:+443333055377"><svg class="icon" aria-hidden="true"><use href="#i-phone"></use></svg><span>Call 0333 305 5377</span></a>
   </div>
@@ -110,9 +113,10 @@
       <div class="hero__copy">
         <p class="eyebrow">Hospitality planning tools</p>
         <h1 id="hero-title">Know the view, the value and the right seat <span class="gold-ink">before you book</span></h1>
-        <p class="lede">Tell us who is going and what matters to you. These five tools show where to sit, what the view looks like and whether a hospitality package earns its place, so your enquiry starts with answers.</p>
+        <p class="lede">Tell us who is going and what matters to you. These six tools show where to sit, what each venue really offers, what the view looks like and whether a hospitality package earns its place, so your enquiry starts with answers.</p>
         <ul class="hero__chips" aria-label="Jump to a tool">
           <li><a class="hero-chip" href="#seat-finder" data-tool-link="seat-finder"><svg class="icon" aria-hidden="true"><use href="#i-pin"></use></svg>Where should I sit?</a></li>
+          <li><a class="hero-chip" href="#venue-guide" data-tool-link="venue-guide"><svg class="icon" aria-hidden="true"><use href="#i-map"></use></svg>Venue guide</a></li>
           <li><a class="hero-chip" href="#reality-viewer" data-tool-link="reality-viewer"><svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg>Seat Reality Viewer</a></li>
           <li><a class="hero-chip" href="#vip-worth" data-tool-link="vip-worth"><svg class="icon" aria-hidden="true"><use href="#i-scale"></use></svg>Is hospitality worth it?</a></li>
           <li><a class="hero-chip" href="#occasion-matchmaker" data-tool-link="occasion-matchmaker"><svg class="icon" aria-hidden="true"><use href="#i-heart"></use></svg>Occasion Matchmaker</a></li>
@@ -126,7 +130,7 @@
 
       <div class="hero__visual">
         <div class="pass-stage" id="pass-stage">
-          <article class="pass" id="hero-pass" aria-label="Example result: Premium lounge seats, with indicative scores">
+          <article class="pass" id="hero-pass" aria-label="Example result: The H Club at Tottenham Hotspur Stadium, with labelled facts">
             <div class="pass__glare" aria-hidden="true"></div>
             <div class="pass__media">
               <div class="pass__pitch" aria-hidden="true">
@@ -141,18 +145,18 @@
             <div class="pass__body">
               <div class="pass__row">
                 <div>
-                  <p class="pass__kicker">Stadium, halfway line</p>
-                  <h2 class="pass__title">Premium lounge seats</h2>
+                  <p class="pass__kicker">Tottenham Hotspur Stadium</p>
+                  <h2 class="pass__title">The H Club</h2>
                 </div>
-                <span class="pass__match"><strong>92</strong><span>Match</span></span>
+                <span class="pass__match"><strong>4</strong><span>Level</span></span>
               </div>
-              <div class="pass__meters">
-                <div class="pass-meter"><span>View</span><span class="pass-meter__bar"><span style="--v:.9"></span></span><span>9</span></div>
-                <div class="pass-meter"><span>Sound</span><span class="pass-meter__bar"><span style="--v:.8"></span></span><span>8</span></div>
-                <div class="pass-meter"><span>Comfort</span><span class="pass-meter__bar"><span style="--v:.8"></span></span><span>8</span></div>
-              </div>
+              <ul class="pass__facts">
+                <li><span>West Stand, Blocks 407 to 410</span><span>measured</span></li>
+                <li><span>Padded seats in front of a lounge</span><span>stated</span></li>
+                <li><span>Seat sizes to UK guidance</span><span>design standard</span></li>
+              </ul>
               <div class="pass__foot">
-                <span>Indicative scores</span>
+                <span>Every figure labelled</span>
                 <span class="pass__perf" aria-hidden="true"></span>
                 <span>Illustration only</span>
               </div>
@@ -178,7 +182,7 @@
   <!-- 4. Tools -->
   <section class="tools-section" id="tools-section" aria-labelledby="tools-title">
     <div class="container tools-section__head" data-reveal>
-      <p class="eyebrow">Five tools, one plan</p>
+      <p class="eyebrow">Six tools, one plan</p>
       <h2 id="tools-title">Plan it properly, one question at a time</h2>
       <p class="lede">Each tool answers one question and hands you on to the next. Save anything useful to My brief as you go.</p>
     </div>
@@ -190,6 +194,10 @@
             <button type="button" role="tab" class="tab" id="tab-seat-finder" aria-controls="panel-seat-finder" aria-selected="false" tabindex="-1" data-tab="seat-finder">
               <span class="tab__icon"><svg class="icon" aria-hidden="true"><use href="#i-pin"></use></svg></span>
               <span class="tab__text"><span class="tab__label">Where Should I Sit?</span><span class="tab__sub">Personalised seating</span></span>
+            </button>
+            <button type="button" role="tab" class="tab" id="tab-venue-guide" aria-controls="panel-venue-guide" aria-selected="false" tabindex="-1" data-tab="venue-guide">
+              <span class="tab__icon"><svg class="icon" aria-hidden="true"><use href="#i-map"></use></svg></span>
+              <span class="tab__text"><span class="tab__label">Venue Guide</span><span class="tab__sub">Every venue, verified</span></span>
             </button>
             <button type="button" role="tab" class="tab" id="tab-reality-viewer" aria-controls="panel-reality-viewer" aria-selected="false" tabindex="-1" data-tab="reality-viewer">
               <span class="tab__icon"><svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg></span>
@@ -215,6 +223,7 @@
 
     <div class="container tool-panels">
       <section class="tool-panel" id="panel-seat-finder" data-tool="seat-finder" role="tabpanel" aria-labelledby="tab-seat-finder" tabindex="-1" hidden></section>
+      <section class="tool-panel" id="panel-venue-guide" data-tool="venue-guide" role="tabpanel" aria-labelledby="tab-venue-guide" tabindex="-1" hidden></section>
       <section class="tool-panel" id="panel-reality-viewer" data-tool="reality-viewer" role="tabpanel" aria-labelledby="tab-reality-viewer" tabindex="-1" hidden></section>
       <section class="tool-panel" id="panel-vip-worth" data-tool="vip-worth" role="tabpanel" aria-labelledby="tab-vip-worth" tabindex="-1" hidden></section>
       <section class="tool-panel" id="panel-occasion-matchmaker" data-tool="occasion-matchmaker" role="tabpanel" aria-labelledby="tab-occasion-matchmaker" tabindex="-1" hidden></section>
@@ -233,18 +242,21 @@
       <ol class="journey__steps">
         <li data-reveal style="--reveal-delay:0ms"><a class="journey-step" href="#seat-finder" data-tool-link="seat-finder">
           <span class="journey-step__num">1</span><span class="journey-step__icon"><svg class="icon" aria-hidden="true"><use href="#i-pin"></use></svg></span>
-          <strong>Find</strong><span>Answer a few questions and get a recommended seating area.</span></a></li>
-        <li data-reveal style="--reveal-delay:70ms"><a class="journey-step" href="#reality-viewer" data-tool-link="reality-viewer">
-          <span class="journey-step__num">2</span><span class="journey-step__icon"><svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg></span>
-          <strong>Preview</strong><span>See an illustrative 3D view from that area.</span></a></li>
-        <li data-reveal style="--reveal-delay:140ms"><a class="journey-step" href="#vip-worth" data-tool-link="vip-worth">
-          <span class="journey-step__num">3</span><span class="journey-step__icon"><svg class="icon" aria-hidden="true"><use href="#i-scale"></use></svg></span>
+          <strong>Find</strong><span>Answer a few questions and get named hospitality at a real venue.</span></a></li>
+        <li data-reveal style="--reveal-delay:50ms"><a class="journey-step" href="#venue-guide" data-tool-link="venue-guide">
+          <span class="journey-step__num">2</span><span class="journey-step__icon"><svg class="icon" aria-hidden="true"><use href="#i-map"></use></svg></span>
+          <strong>Check</strong><span>Read what is verified about the venue, its seats and its hospitality.</span></a></li>
+        <li data-reveal style="--reveal-delay:100ms"><a class="journey-step" href="#reality-viewer" data-tool-link="reality-viewer">
+          <span class="journey-step__num">3</span><span class="journey-step__icon"><svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg></span>
+          <strong>Preview</strong><span>See an illustrative 3D view from that exact seat.</span></a></li>
+        <li data-reveal style="--reveal-delay:150ms"><a class="journey-step" href="#vip-worth" data-tool-link="vip-worth">
+          <span class="journey-step__num">4</span><span class="journey-step__icon"><svg class="icon" aria-hidden="true"><use href="#i-scale"></use></svg></span>
           <strong>Weigh up</strong><span>Compare a standard ticket with hospitality, using your own figures.</span></a></li>
-        <li data-reveal style="--reveal-delay:210ms"><a class="journey-step" href="#occasion-matchmaker" data-tool-link="occasion-matchmaker">
-          <span class="journey-step__num">4</span><span class="journey-step__icon"><svg class="icon" aria-hidden="true"><use href="#i-heart"></use></svg></span>
+        <li data-reveal style="--reveal-delay:200ms"><a class="journey-step" href="#occasion-matchmaker" data-tool-link="occasion-matchmaker">
+          <span class="journey-step__num">5</span><span class="journey-step__icon"><svg class="icon" aria-hidden="true"><use href="#i-heart"></use></svg></span>
           <strong>Match</strong><span>Not sure which event? Start from the occasion instead.</span></a></li>
-        <li data-reveal style="--reveal-delay:280ms"><a class="journey-step" href="#corporate-roi" data-tool-link="corporate-roi">
-          <span class="journey-step__num">5</span><span class="journey-step__icon"><svg class="icon" aria-hidden="true"><use href="#i-chart"></use></svg></span>
+        <li data-reveal style="--reveal-delay:250ms"><a class="journey-step" href="#corporate-roi" data-tool-link="corporate-roi">
+          <span class="journey-step__num">6</span><span class="journey-step__icon"><svg class="icon" aria-hidden="true"><use href="#i-chart"></use></svg></span>
           <strong>Make the case</strong><span>Turn client entertaining into a business case for sign-off.</span></a></li>
       </ol>
     </div>
@@ -336,20 +348,20 @@
           <div class="faq-item__body"><p>No. Every tool works straight away with no login. Your brief is kept in this browser only.</p></div>
         </details>
         <details class="faq-item" data-reveal>
-          <summary><span>Are the scores facts?</span><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg></summary>
-          <div class="faq-item__body"><p>No. View, sound, comfort and atmosphere scores are indicative opinions for comparing one area with another. They are not measurements and can differ from venue to venue.</p></div>
+          <summary><span>Where do the venue facts come from?</span><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg></summary>
+          <div class="faq-item__body"><p>From the venues themselves, their architects, planning documents and published access surveys, each labelled stated or measured with its source. No venue publishes its seat sizes, so those are UK and FIFA design standards. Anything we worked out ourselves is labelled modelled.</p></div>
         </details>
         <details class="faq-item" data-reveal>
           <summary><span>Do the calculators use your prices?</span><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg></summary>
-          <div class="faq-item__body"><p>No. The calculators use the figures you type in. Any example figures are illustrative and clearly labelled, not quotes. A specialist gives you real prices for your date and group.</p></div>
+          <div class="faq-item__body"><p>No. The calculators only use figures you type in, and nothing is filled in for you. A specialist gives you real prices for your date and group.</p></div>
         </details>
         <details class="faq-item" data-reveal>
           <summary><span>Can I share my results?</span><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg></summary>
-          <div class="faq-item__body"><p>Yes. Every result has its own link that opens the tool with your answers filled in, and you can collect results in My brief to copy, print or send to a specialist.</p></div>
+          <div class="faq-item__body"><p>Yes. Every result has its own link that opens the tool with your answers filled in, and you can collect results in My brief to copy, print or take to a specialist.</p></div>
         </details>
         <details class="faq-item" data-reveal>
           <summary><span>How do I book?</span><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg></summary>
-          <div class="faq-item__body"><p>Speak to a hospitality specialist on <a href="tel:+443333055377">0333 305 5377</a>, or send your brief from any tool and a specialist will talk through dates, seats and packages with you.</p></div>
+          <div class="faq-item__body"><p>Speak to a hospitality specialist on <a href="tel:+443333055377">0333 305 5377</a>. From any tool you can copy your brief and open the matching page on our website to make your enquiry there.</p></div>
         </details>
       </div>
     </div>
@@ -361,12 +373,12 @@
       <div>
         <p class="eyebrow">Ready when you are</p>
         <h2 id="cta-title">Speak to a hospitality specialist</h2>
-        <p class="lede">Bring your brief, or just the date and who is going. A specialist will check availability, confirm seats and talk you through the packages.</p>
+        <p class="lede">Bring your brief, or just the date and who is going. A specialist will confirm the seats and talk you through the packages.</p>
       </div>
       <div class="cta-band__actions">
-        <button type="button" class="btn btn--gold btn--lg" data-open-enquiry><svg class="icon" aria-hidden="true"><use href="#i-mail"></use></svg><span>Make an enquiry</span></button>
-        <a class="btn btn--ghost-ink btn--lg" href="tel:+443333055377"><svg class="icon" aria-hidden="true"><use href="#i-phone"></use></svg><span>0333 305 5377</span></a>
-        <p class="cta-band__browse">Or browse <a href="https://prestigecorporateevents.com/sport">sport</a>, <a href="https://prestigecorporateevents.com/music">music</a> and <a href="https://prestigecorporateevents.com/arts-culture">arts and culture</a>.</p>
+        <button type="button" class="btn btn--gold btn--lg" data-open-enquiry><svg class="icon" aria-hidden="true"><use href="#i-copy"></use></svg><span>Get my brief ready</span></button>
+        <a class="btn btn--ghost-ink btn--lg" href="tel:+443333055377"><svg class="icon" aria-hidden="true"><use href="#i-phone"></use></svg><span>Call 0333 305 5377</span></a>
+        <p class="cta-band__browse">Or browse <a href="https://prestigecorporateevents.com/sport" data-out="cta-band">sport</a>, <a href="https://prestigecorporateevents.com/music" data-out="cta-band">music</a> and <a href="https://prestigecorporateevents.com/arts-culture" data-out="cta-band">Arts &amp; Culture</a> on our website.</p>
       </div>
     </div>
   </section>
@@ -401,8 +413,8 @@
         </div>
         <div class="newsletter__done" hidden tabindex="-1">
           <span class="success-mark"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg></span>
-          <h3>You are on the list (in the real version)</h3>
-          <p class="muted">This is a prototype, so nothing was sent and nothing was stored.</p>
+          <h3>Prototype only: you have not been signed up</h3>
+          <p class="muted">Nothing was sent and nothing was stored. To hear about new dates now, call <a href="tel:+443333055377">0333 305 5377</a>.</p>
           <button type="button" class="btn btn--ghost btn--sm" data-nl-reset>Start again</button>
         </div>
       </form>
@@ -420,16 +432,17 @@
     <nav class="site-footer__nav" aria-label="Footer">
       <p class="site-footer__title">Explore</p>
       <ul>
-        <li><a href="https://prestigecorporateevents.com/sport">Sport</a></li>
-        <li><a href="https://prestigecorporateevents.com/music">Music</a></li>
-        <li><a href="https://prestigecorporateevents.com/arts-culture">Arts and culture</a></li>
-        <li><a href="https://prestigecorporateevents.com/contact">Contact</a></li>
+        <li><a href="https://prestigecorporateevents.com/sport" data-out="footer">Sport</a></li>
+        <li><a href="https://prestigecorporateevents.com/music" data-out="footer">Music</a></li>
+        <li><a href="https://prestigecorporateevents.com/arts-culture" data-out="footer">Arts &amp; Culture</a></li>
+        <li><a href="https://prestigecorporateevents.com/contact" data-out="footer">Contact</a></li>
       </ul>
     </nav>
     <nav class="site-footer__nav" aria-label="Planning tools">
       <p class="site-footer__title">Planning tools</p>
       <ul>
         <li><a href="#seat-finder" data-tool-link="seat-finder">Where Should I Sit?</a></li>
+        <li><a href="#venue-guide" data-tool-link="venue-guide">Venue Guide</a></li>
         <li><a href="#reality-viewer" data-tool-link="reality-viewer">Seat Reality Viewer</a></li>
         <li><a href="#vip-worth" data-tool-link="vip-worth">Is Hospitality Worth It?</a></li>
         <li><a href="#occasion-matchmaker" data-tool-link="occasion-matchmaker">Occasion Matchmaker</a></li>
@@ -448,39 +461,27 @@
   <div class="modal__head">
     <div>
       <p class="eyebrow">Speak to a specialist</p>
-      <h2 id="enq-title">Tell us about your event</h2>
+      <h2 id="enq-title">Take your brief to a specialist</h2>
     </div>
     <button type="button" class="btn btn--ghost btn--icon btn--sm" data-close aria-label="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
   </div>
   <form class="modal__body enquiry" id="enquiry-form" novalidate>
     <div class="enquiry__context" id="enq-context" hidden></div>
+    <p class="handoff__lede">Nothing is sent from this page. Copy your brief, then paste it into your enquiry on our website, or have it to hand when you call.</p>
     <div class="enquiry__grid">
-      <div class="field"><label class="field__label" for="enq-name">Your name</label><input class="input" id="enq-name" name="name" autocomplete="name" required><span class="field__error" hidden></span></div>
-      <div class="field"><label class="field__label" for="enq-email">Email</label><input class="input" id="enq-email" name="email" type="email" autocomplete="email" required><span class="field__error" hidden></span></div>
-      <div class="field"><label class="field__label" for="enq-phone">Phone <span class="field__opt">optional</span></label><input class="input" id="enq-phone" name="phone" type="tel" autocomplete="tel"><span class="field__error" hidden></span></div>
-      <div class="field"><label class="field__label" for="enq-company">Company <span class="field__opt">optional</span></label><input class="input" id="enq-company" name="company" autocomplete="organization"></div>
-      <div class="field enquiry__wide"><label class="field__label" for="enq-event">Event or occasion</label><input class="input" id="enq-event" name="event" required placeholder="For example, a concert with clients"><span class="field__error" hidden></span></div>
       <div class="field"><label class="field__label" for="enq-date">Preferred date <span class="field__opt">optional</span></label><input class="input" id="enq-date" name="date" inputmode="numeric" placeholder="DD/MM/YYYY" aria-describedby="enq-date-hint"><span class="field__hint" id="enq-date-hint">Format DD/MM/YYYY, or leave blank if flexible</span><span class="field__error" hidden></span></div>
-      <div class="field"><label class="field__label" for="enq-size">Group size</label><input class="input" id="enq-size" name="size" inputmode="numeric" placeholder="For example, 6" required><span class="field__error" hidden></span></div>
-      <div class="field enquiry__wide"><label class="field__label" for="enq-message">Message</label><textarea class="input textarea" id="enq-message" name="message" rows="6"></textarea></div>
+      <div class="field"><label class="field__label" for="enq-size">Group size <span class="field__opt">optional</span></label><input class="input" id="enq-size" name="size" inputmode="numeric" placeholder="How many people"><span class="field__error" hidden></span></div>
+      <div class="field enquiry__wide"><label class="field__label" for="enq-message">Your brief</label><textarea class="input textarea" id="enq-message" name="message" rows="8" aria-describedby="enq-message-hint"></textarea><span class="field__hint" id="enq-message-hint">Edit anything you like before you copy it.</span></div>
     </div>
-    <label class="check">
-      <input type="checkbox" id="enq-consent" required>
-      <span class="check__box" aria-hidden="true"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg></span>
-      <span>I agree that Prestige Corporate Events may contact me about this enquiry.</span>
-    </label>
-    <span class="field__error" id="enq-consent-err" hidden></span>
-    <div class="modal__foot">
-      <p class="fine-print">Prototype: nothing you enter here is sent anywhere.</p>
-      <button type="submit" class="btn btn--gold btn--lg"><span>Send enquiry</span><svg class="icon icon--nudge" aria-hidden="true"><use href="#i-arrow-right"></use></svg></button>
+    <p class="handoff__where" id="handoff-where"></p>
+    <div class="handoff__actions">
+      <a class="btn btn--gold btn--lg" id="handoff-open" href="https://prestigecorporateevents.com/contact" target="_blank" rel="noopener"><svg class="icon" aria-hidden="true"><use href="#i-copy"></use></svg><span id="handoff-open-label">Copy my brief and open our website</span><span class="visually-hidden"> (opens in a new tab)</span></a>
+      <button type="button" class="btn btn--ghost" id="handoff-copy"><svg class="icon" aria-hidden="true"><use href="#i-copy"></use></svg><span>Copy only</span></button>
+      <a class="btn btn--ink" href="tel:+443333055377"><svg class="icon" aria-hidden="true"><use href="#i-phone"></use></svg><span>Call 0333 305 5377</span></a>
     </div>
+    <p class="handoff__status" id="handoff-status" role="status" aria-live="polite"></p>
+    <p class="fine-print">Our website opens in a new tab. We never send anything for you, and nothing you type here is stored.</p>
   </form>
-  <div class="modal__body enquiry__done" id="enquiry-done" hidden tabindex="-1">
-    <span class="success-mark"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg></span>
-    <h3>Thank you, that is everything we would need</h3>
-    <p class="muted">This is a prototype, so nothing was sent. In the live version a hospitality specialist would reply to you. To speak to someone now, call <a href="tel:+443333055377">0333 305 5377</a>.</p>
-    <button type="button" class="btn btn--ink" data-close>Close</button>
-  </div>
 </dialog>
 
 <!-- Brief drawer -->
@@ -494,7 +495,7 @@
   </div>
   <div class="drawer__body" id="brief-body"></div>
   <div class="drawer__foot" id="brief-foot">
-    <button type="button" class="btn btn--gold btn--block" data-brief="send"><svg class="icon" aria-hidden="true"><use href="#i-phone"></use></svg><span>Send to a specialist</span></button>
+    <button type="button" class="btn btn--gold btn--block" data-brief="send"><svg class="icon" aria-hidden="true"><use href="#i-phone"></use></svg><span>Take my brief to a specialist</span></button>
     <div class="drawer__tools">
       <button type="button" class="btn btn--ghost btn--sm" data-brief="copy"><svg class="icon" aria-hidden="true"><use href="#i-copy"></use></svg><span>Copy summary</span></button>
       <button type="button" class="btn btn--ghost btn--sm" data-brief="print"><svg class="icon" aria-hidden="true"><use href="#i-printer"></use></svg><span>Print or save as PDF</span></button>

@@ -7,9 +7,12 @@ import {
 } from './core.js';
 import { icon, chips } from './ui.js';
 import { injectIcons } from './icons.js';
-import { EVENT_TYPES } from './data/venues.js';
+import { handoffPath, decorateLinks } from './data/prestige-links.js';
 
 injectIcons();
+// Static links to our website (header, menu, footer, CTA band) get UTM tags, a new tab
+// and rel="noopener".
+decorateLinks(document);
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -189,23 +192,20 @@ function liveValidate(form, rules) {
 }
 
 /* ======================================================================
-   Enquiry modal
+   Enquiry hand-off. Nothing is sent from this page: the modal copies the brief to the
+   clipboard and opens the most relevant page on our website in a new tab (UTM tagged),
+   with the phone number as a click-to-call link. It never claims anything was sent.
    ====================================================================== */
 
 const enqForm = $('#enquiry-form');
-const enqDone = $('#enquiry-done');
 const enqContext = $('#enq-context');
+const handoffOpen = $('#handoff-open');
+const handoffLabel = $('#handoff-open-label');
+const handoffWhere = $('#handoff-where');
+const handoffStatus = $('#handoff-status');
+let handoffPage = 'our website';
 
 const enqValidator = liveValidate(enqForm, {
-  'enq-name': (i) => (i.value.trim().length < 2 ? 'Please tell us your name.' : ''),
-  'enq-email': (i) => (!i.value.trim() ? 'Please add your email address.' : !EMAIL_RE.test(i.value.trim()) ? 'That email address does not look complete.' : ''),
-  'enq-phone': (i) => {
-    const v = i.value.trim();
-    if (!v) return '';
-    const digits = v.replace(/\D/g, '');
-    return /[^\d\s+()-]/.test(v) || digits.length < 10 || digits.length > 15 ? 'Please check the phone number, or leave it blank.' : '';
-  },
-  'enq-event': (i) => (i.value.trim().length < 2 ? 'Tell us the event or occasion you have in mind.' : ''),
   'enq-date': (i) => {
     const v = i.value.trim();
     if (!v) return '';
@@ -216,53 +216,102 @@ const enqValidator = liveValidate(enqForm, {
   },
   'enq-size': (i) => {
     const v = i.value.trim();
-    if (!v) return 'How many people are going?';
+    if (!v) return '';
     const n = Number(v);
-    return !Number.isInteger(n) || n < 1 ? 'Please enter a whole number, 1 or more.' : n > 500 ? 'For groups over 500, call us on 0333 305 5377.' : '';
+    return !Number.isInteger(n) || n < 1 ? 'Please enter a whole number, 1 or more, or leave it blank.' : n > 500 ? 'For groups over 500, call us on 0333 305 5377.' : '';
   },
-  'enq-consent': (i) => (i.checked ? '' : 'Please tick to let us contact you about this enquiry.'),
 });
+
+// "our Tottenham Hotspur Stadium page", "our contact page", "our homepage".
+function pageWords(link) {
+  if (!link) return 'our website';
+  if (link.path === '/') return 'our homepage';
+  if (link.path === '/contact') return 'our contact page';
+  return `our ${link.short} page`;
+}
+
+function handoffText() {
+  const date = $('#enq-date').value.trim();
+  const size = $('#enq-size').value.trim();
+  const extra = [date && `Preferred date: ${date}`, size && `Group size: ${size}`].filter(Boolean);
+  return [
+    `Hospitality brief from the Prestige Corporate Events planning tools (${fmt.date()})`,
+    '',
+    $('#enq-message').value.trim(),
+    ...(extra.length ? ['', ...extra] : []),
+  ].join('\n').trim();
+}
+
+// Copies at once inside the click (so it works even as the new tab takes focus), with the
+// async clipboard as a second try.
+function copyNow(text) {
+  let ok = false;
+  const ta = Object.assign(document.createElement('textarea'), { value: text });
+  ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none';
+  enqForm.append(ta);
+  ta.select();
+  try { ok = document.execCommand('copy'); } catch { ok = false; }
+  ta.remove();
+  if (!ok && navigator.clipboard?.writeText) navigator.clipboard.writeText(text).catch(() => {});
+}
+
+// Context for the best page: the tool's own ids, else the ids in the address bar.
+function contextFrom(prefill) {
+  if (prefill.context) return prefill.context;
+  const p = parseHash().params || {};
+  return { venue: p.venue || null, area: p.area || null, mode: p.mode || null, day: p.day || null, event: p.event || null };
+}
 
 function openEnquiry(prefill = {}) {
   const opener = document.activeElement;
-  // Leaving a drawer to open the enquiry: return focus to whatever opened the drawer.
+  // Leaving a drawer to open the hand-off: return focus to whatever opened the drawer.
   const fromDrawer = briefDrawer.open;
   const drawerOpener = fromDrawer ? ([returnFocus.get(briefDrawer)].find((o) => o && o !== document.body) || $('#brief-btn')) : null;
   if (fromDrawer) { returnFocus.set(briefDrawer, null); closeDialog(briefDrawer); }
   if (menuSheet.open) { returnFocus.set(menuSheet, null); closeDialog(menuSheet); }
 
-  enqForm.hidden = false;
-  enqDone.hidden = true;
   enqValidator.reset();
+  handoffStatus.textContent = '';
 
   const tool = prefill.tool ? toolById(prefill.tool) : null;
   const lines = Array.isArray(prefill.lines) ? prefill.lines.filter(Boolean) : [];
-  const message = [prefill.summary, ...lines].filter(Boolean).join('\n');
+  const message = [prefill.summary, ...lines, tool ? `Planning tools link: ${shareUrl(tool.id, parseHash().tool === tool.id ? parseHash().params : {})}` : ''].filter(Boolean).join('\n');
   $('#enq-message').value = message;
-  if (prefill.event) $('#enq-event').value = prefill.event;
-  if (prefill.size) $('#enq-size').value = String(prefill.size);
+  $('#enq-date').value = '';
+  $('#enq-size').value = prefill.size ? String(prefill.size) : '';
+
+  const link = handoffPath({ ...contextFrom(prefill), tool: prefill.tool || 'enquiry' });
+  handoffPage = pageWords(link);
+  handoffOpen.href = link.href;
+  handoffLabel.textContent = `Copy my brief and open ${handoffPage}`;
+  handoffWhere.textContent = `We will open ${handoffPage} on prestigecorporateevents.com in a new tab.`;
 
   const from = tool ? tool.label : prefill.tool === 'brief' ? 'My brief' : '';
   if (from || prefill.summary) {
     enqContext.hidden = false;
-    enqContext.innerHTML = html`${raw(icon('bookmark'))}<span>${from ? `From ${from}: ` : ''}${prefill.summary || 'your result'}. We have added the details to your message, so edit anything you like.</span>`;
+    enqContext.innerHTML = html`${raw(icon('bookmark'))}<span>${from ? `From ${from}: ` : ''}${prefill.summary || 'your result'}. The details are in your brief below, so edit anything you like.</span>`;
   } else {
     enqContext.hidden = true;
     enqContext.innerHTML = '';
   }
   openDialog(enquiryModal, fromDrawer ? drawerOpener : opener);
-  const firstEmpty = ['enq-name', 'enq-email', 'enq-event', 'enq-size'].map((id) => document.getElementById(id)).find((i) => !i.value.trim());
-  (firstEmpty || $('#enq-name')).focus();
+  $('#enq-message').focus();
 }
 
-enqForm.addEventListener('submit', (e) => {
-  e.preventDefault();
+handoffOpen.addEventListener('click', (e) => {
+  const bad = enqValidator.validateAll();
+  if (bad) { e.preventDefault(); bad.focus(); return; }
+  copyNow(handoffText());
+  handoffStatus.textContent = `Brief copied. Paste it into your enquiry on ${handoffPage}, which opens in a new tab.`;
+});
+$('#handoff-copy').addEventListener('click', () => {
   const bad = enqValidator.validateAll();
   if (bad) { bad.focus(); return; }
-  enqForm.hidden = true;
-  enqDone.hidden = false;
-  enqDone.focus();
+  copyNow(handoffText());
+  handoffStatus.textContent = 'Brief copied. Paste it into your enquiry on our website, or an email to a colleague.';
 });
+enqForm.addEventListener('submit', (e) => { e.preventDefault(); $('#handoff-copy').click(); });
 
 $$('[data-open-enquiry]').forEach((b) => b.addEventListener('click', () => openEnquiry({})));
 
@@ -287,7 +336,7 @@ function renderBrief() {
     briefBody.innerHTML = html`<div class="brief-empty">
       ${raw(icon('bookmark'))}
       <h3>Your brief is empty</h3>
-      <p>Use "Add to my brief" on any tool result to collect seats, views and figures here. You can then copy, print or send the lot to a specialist.</p>
+      <p>Use "Add to my brief" on any tool result to collect seats, views and figures here. You can then copy, print or take the lot to a specialist.</p>
       <button type="button" class="btn btn--ink btn--sm" data-close data-goto="seat-finder">Start with Where Should I Sit?</button>
     </div>`;
     return;
@@ -386,16 +435,22 @@ briefFoot.addEventListener('click', async (e) => {
     }
   } else if (act === 'send') {
     const items = brief.list().slice().reverse();
-    // Pre-fill the event and group size from the saved results when they agree on one.
-    const evLabels = [...new Set(items.map((i) => EVENT_TYPES.find((t) => t.id === i.params?.event)?.label).filter(Boolean))];
+    // Group size from the saved results; the page to open from the newest result that names
+    // a venue, else an event type, else our contact page.
     const sizes = items.map((i) => {
       const p = i.params || {};
       const n = Number(p.size || p.guests || (p.clients ? Number(p.clients) + Number(p.hosts ?? 1) : 0));
       return Number.isFinite(n) && n > 0 ? n : 0;
     }).filter(Boolean);
+    const newest = brief.list();
+    const withVenue = newest.find((i) => i.params?.venue);
+    const withEvent = newest.find((i) => i.params?.event);
+    const context = withVenue
+      ? { venue: withVenue.params.venue, area: withVenue.params.area || null, mode: withVenue.params.mode || null, day: withVenue.params.day || null, event: withVenue.params.event || null }
+      : { event: withEvent?.params?.event || null };
     openEnquiry({
       tool: 'brief',
-      event: evLabels.length === 1 ? evLabels[0] : undefined,
+      context,
       size: sizes.length ? Math.min(500, Math.max(...sizes)) : undefined,
       summary: items.length === 1 ? '1 saved result' : `${items.length} saved results`,
       lines: items.flatMap((i, n) => [`${n + 1}. ${i.title}${i.subtitle ? `: ${i.subtitle}` : ''}`, ...(i.lines || []).map((l) => `   ${l}`), `   ${shareUrl(i.tool, i.params)}`]),
@@ -694,7 +749,7 @@ $$('.insight__toggle').forEach((b) => b.addEventListener('click', () => {
   b.querySelector('span').textContent = open ? 'Show less' : 'Read more';
 }));
 
-const NL_INTERESTS = ['Sport', 'Music', 'Arts and culture', 'Comedy', 'Racing', 'Football', 'Boxing', 'Rugby', 'Formula 1', 'Darts', 'Cricket', 'Tennis', 'NFL'];
+const NL_INTERESTS = ['Sport', 'Music', 'Arts & Culture', 'Comedy', 'Racing', 'Football', 'Boxing', 'Rugby', 'Formula 1', 'Darts', 'Cricket', 'Tennis', 'NFL'];
 const nlChips = chips({ label: 'Interests', options: NL_INTERESTS.map((l) => ({ value: l, label: l })), value: [], multi: true });
 $('#nl-interests').replaceWith(Object.assign(nlChips.el, { id: 'nl-interests' }));
 
@@ -719,6 +774,14 @@ $('[data-nl-reset]', nlForm).addEventListener('click', () => {
   $('.newsletter__done', nlForm).hidden = true;
   $('.newsletter__fields', nlForm).hidden = false;
   $('#nl-email').focus();
+});
+
+// The browser's own Print on the Venue Guide prints just the guide, as its button does.
+window.addEventListener('beforeprint', () => {
+  const root = document.documentElement;
+  if (root.classList.contains('printing-brief') || parseHash().tool !== 'venue-guide') return;
+  root.classList.add('printing-guide');
+  window.addEventListener('afterprint', () => root.classList.remove('printing-guide'), { once: true });
 });
 
 $('#year').textContent = String(new Date().getFullYear());

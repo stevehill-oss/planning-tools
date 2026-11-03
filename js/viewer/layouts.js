@@ -1,21 +1,37 @@
-// Venue layouts for the Seat Reality Viewer. Pure maths, no three.js, so the UI
-// (mini-map, descriptions) can import it statically while the 3D engine loads later.
+// Venue geometry for the Seat Reality Viewer, at true scale in metres. Pure maths, no
+// three.js, so the UI (seat picker, numbers panel, mini-map) imports it statically while
+// the 3D engine loads later. Rebuilt 02/11/2026 from dev/research/venue-facts.json.
 //
-// Units are metres-like but ILLUSTRATIVE: these are generic archetypes, not surveys of
-// any real venue. Never show these numbers to visitors as facts.
+// WHAT IS STATED AND WHAT IS MODELLED
+// - Stated or derived figures from the research are marked "stated" in the comment next to
+//   them (pitch size, rake limits, the Royal Albert Hall's internal axes and dome height,
+//   Ascot's 480 m grandstand and 2.5 furlong run-in, and so on).
+// - Everything else is modelled: row counts, row depths, tier heights, corner radii, block
+//   widths, floor heights in the racecourse stands, the arena bowls. Where a row profile is
+//   not published, tiers are designed the way UK stands are designed: rows of 0.8 m tread
+//   (FIFA minimum), each riser chosen so the sightline over the head in front clears it by
+//   the FIFA preferred C-value of 90 mm, capped at the 35 degree UK maximum rake.
+// - The seated eye height (1.1 m above the tread) is our estimate, worked out from the Sports
+//   Ground Safety Authority's Accessible Stadia figures (a wheelchair user's eye at 1155 mm,
+//   40 to 60 mm above a seated spectator's). The Green Guide and BS EN 13200-1 are paywalled.
+// - Block runs (js/data/seatmaps.js) put the aisles of every seated tier at block edges, so
+//   the 3D bowl and the seat map share one set of seats: tierSlots() below is the only place
+//   seat positions are made (bowl.js builds the 3D seats from it, seatplan.js the map).
 //
-// Plan coordinates: x runs along the long axis (goal to goal, or stage end at +x),
-// z across it, y is up. In the SVG mini-map, svg x = world x and svg y = world z.
+// Plan coordinates: x and z in metres, y up. In the SVG mini-map, svg x = world x and
+// svg y = world z. Ring venues sweep a profile (d across, y up) round a rounded rectangle
+// whose offset curves are exact. Arc length s grows anticlockwise seen from above, which
+// is always the seated viewer's right.
 //
-// The bowl of every archetype is built from a Ring: a rounded rectangle whose offset
-// curves (pushed outward by distance d) are exact, so a "profile" drawn in (d, y)
-// can be swept all the way round to make tiers, roofs and fascias.
-//
-// HOW TO ADD AN ARCHETYPE (part 2: hall, racecourse):
-//   1. Add an entry to LAYOUTS with { ring, tiers, focal(mode), areas }.
-//   2. Each area has seat(mode, rowKey, posKey) returning a SeatSpec (see seatSpec()).
-//   3. Add a builder module js/viewer/archetypes/<name>.js (see stadium.js header).
-//   4. Add a mini-map drawer in planSvg() (or rely on the generic ring drawer).
+// Public API
+//   layoutFor(venueId)                      the venue's layout (cached)
+//   seatSpec(venueId, mode, areaId, seat)   camera spec; seat = { place, block, row, pos }
+//   seatChoices(venueId, mode, areaId, placeId)  what the seat picker offers
+//   seatNumbers(spec)                       distance, eye height, angles, C-value
+//   describeSeat(spec), plan(venueId, mode, day), hasLayout(venueId)
+
+import { VENUES, venueById, areaById } from '../data/venues.js';
+import { SEATMAPS } from '../data/seatmaps.js';
 
 /* ---------- Ring: rounded rectangle with exact offsets ---------- */
 
@@ -25,20 +41,18 @@ export class Ring {
     this.ax = hx - r; this.az = hz - r;
   }
 
-  // Nine segments, travelling from the middle of the +z side towards +x and round.
   segLen(i, d = 0) {
     const { ax, az, r } = this;
     switch (i) {
       case 0: case 8: return ax;
       case 2: case 6: return 2 * az;
       case 4: return 2 * ax;
-      default: return (r + d) * Math.PI / 2;
+      default: return Math.max(0, r + d) * Math.PI / 2;
     }
   }
 
   length(d = 0) { let L = 0; for (let i = 0; i < 9; i++) L += this.segLen(i, d); return L; }
 
-  // Point and outward normal at segment i, fraction f (0..1), pushed out by d.
   point(i, f, d = 0) {
     const { hx, hz, ax, az, r } = this;
     const R = r + d;
@@ -54,18 +68,15 @@ export class Ring {
       case 7: a = Math.PI - Math.PI / 2 * f; nx = Math.cos(a); nz = Math.sin(a); x = -ax + R * nx; z = az + R * nz; break;
       default: x = -ax + ax * f; z = hz + d; nx = 0; nz = 1; break;
     }
-    // Tangent in the direction of travel.
     return { x, z, nx, nz, tx: nz, tz: -nx };
   }
 
-  // Arc length (at offset d) of segment i, fraction f.
   sOf(i, f, d = 0) {
     let s = 0;
     for (let k = 0; k < i; k++) s += this.segLen(k, d);
     return s + f * this.segLen(i, d);
   }
 
-  // Inverse of sOf: segment and fraction for arc length s at offset d.
   locate(s, d = 0) {
     const L = this.length(d);
     s = ((s % L) + L) % L;
@@ -79,18 +90,15 @@ export class Ring {
 
   at(s, d = 0) { const { i, f } = this.locate(s, d); return { ...this.point(i, f, d), s }; }
 
-  // Signed offset of plan position (x, z) from the ring (negative inside): the inverse of d.
   dOf(x, z) {
     const qx = Math.abs(x) - this.ax; const qz = Math.abs(z) - this.az;
     return Math.hypot(Math.max(qx, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qz), 0) - this.r;
   }
 
-  // Arc length (offset d) of the point nearest to plan position (x, z).
   sNear(x, z, d = 0) {
     const L = this.length(d);
     let nearS = 0; let nearD = Infinity;
-    const step = 0.5;
-    for (let s = 0; s < L; s += step) {
+    for (let s = 0; s < L; s += 0.5) {
       const p = this.at(s, d);
       const dd = (p.x - x) ** 2 + (p.z - z) ** 2;
       if (dd < nearD) { nearD = dd; nearS = s; }
@@ -98,7 +106,6 @@ export class Ring {
     return nearS;
   }
 
-  // Samples for sweeping a profile all the way round: [{ i, f }], closed (first repeated).
   samples({ straightStep = 6, cornerSteps = 14 } = {}) {
     const out = [];
     for (let i = 0; i < 9; i++) {
@@ -112,14 +119,13 @@ export class Ring {
     return out;
   }
 
-  // Radial lines used for aisles: [{ i, f }], open list (does not repeat the first).
   radials({ straightEvery = 9, cornerSplits = 3 } = {}) {
     const out = [];
     for (let i = 0; i < 9; i++) {
       const isCorner = i % 2 === 1;
       const len = this.segLen(i, 0);
       if (len <= 0.01 && !isCorner) continue;
-      if (i === 8) { // second half of the +z side: share spacing with segment 0
+      if (i === 8) {
         const n = Math.max(1, Math.round(len / straightEvery));
         for (let k = 0; k < n; k++) out.push({ i, f: k / n });
         continue;
@@ -129,650 +135,1392 @@ export class Ring {
     }
     return out;
   }
+
+  // Arc length at d = 0 for a plan position on a named side ('e' +z, 'n' +x, 'w' -z,
+  // 's' -x) or corner ('ne', 'nw', 'sw', 'se'): v is x on e and w, z on n and s, and the
+  // fraction 0..1 round a corner.
+  sAt(side, v) {
+    const { ax, az } = this;
+    const L = this.length(0);
+    switch (side) {
+      case 'e': return v >= 0 ? v : L + v;
+      case 'ne': return this.sOf(1, v);
+      case 'n': return this.sOf(2, az > 0 ? (az - v) / (2 * az) : 0.5);
+      case 'nw': return this.sOf(3, v);
+      case 'w': return this.sOf(4, (ax - v) / (2 * ax));
+      case 'sw': return this.sOf(5, v);
+      case 's': return this.sOf(6, az > 0 ? (v + az) / (2 * az) : 0.5);
+      case 'se': return this.sOf(7, v);
+      default: return 0;
+    }
+  }
 }
+
+// A convex rounded polygon with exact offsets (a racecourse loop). Same interface as Ring:
+// segments alternate straight and arc; d > 0 is outwards. Used for the round courses.
+export class Loop {
+  constructor(verts, radii) {
+    const n = verts.length; this.n = n;
+    let area = 0;
+    for (let k = 0; k < n; k++) { const a = verts[k]; const b = verts[(k + 1) % n]; area += a[0] * b[1] - b[0] * a[1]; }
+    this.sign = area > 0 ? 1 : -1;
+    this.corners = verts.map((v, k) => {
+      const p = verts[(k - 1 + n) % n]; const q = verts[(k + 1) % n];
+      const a = norm([v[0] - p[0], v[1] - p[1]]); const b = norm([q[0] - v[0], q[1] - v[1]]);
+      const turn = Math.acos(Math.max(-1, Math.min(1, a[0] * b[0] + a[1] * b[1])));
+      const r = radii[k]; const t = r * Math.tan(turn / 2);
+      const nIn = [-a[1] * this.sign, a[0] * this.sign]; // inward normal of the incoming edge
+      const c = [v[0] - a[0] * t + nIn[0] * r, v[1] - a[1] * t + nIn[1] * r];
+      const t0 = [v[0] - a[0] * t, v[1] - a[1] * t]; const t1 = [v[0] + b[0] * t, v[1] + b[1] * t];
+      return { v, a, b, r, turn, c, t0, t1 };
+    });
+  }
+
+  segLen(j, d = 0) {
+    const k = j >> 1; const C = this.corners[k];
+    if (j % 2 === 0) { const N = this.corners[(k + 1) % this.n]; return Math.hypot(N.t0[0] - C.t1[0], N.t0[1] - C.t1[1]); }
+    return Math.max(0, this.corners[(k + 1) % this.n].r + d) * this.corners[(k + 1) % this.n].turn;
+  }
+
+  get segs() { return this.n * 2; }
+  length(d = 0) { let L = 0; for (let j = 0; j < this.segs; j++) L += this.segLen(j, d); return L; }
+
+  point(j, f, d = 0) {
+    const k = j >> 1; const C = this.corners[k]; const N = this.corners[(k + 1) % this.n];
+    if (j % 2 === 0) {
+      const ox = -C.b[1] * this.sign * -1; const oz = C.b[0] * this.sign * -1; // outward normal
+      const x = C.t1[0] + (N.t0[0] - C.t1[0]) * f + ox * d; const z = C.t1[1] + (N.t0[1] - C.t1[1]) * f + oz * d;
+      return { x, z, nx: ox, nz: oz, tx: C.b[0], tz: C.b[1] };
+    }
+    const a0 = Math.atan2(N.t0[1] - N.c[1], N.t0[0] - N.c[0]);
+    const ang = a0 + this.sign * N.turn * f;
+    const nx = Math.cos(ang); const nz = Math.sin(ang); const R = N.r + d;
+    return { x: N.c[0] + nx * R, z: N.c[1] + nz * R, nx, nz, tx: -nz * this.sign, tz: nx * this.sign };
+  }
+
+  sOf(j, f, d = 0) { let s = 0; for (let q = 0; q < j; q++) s += this.segLen(q, d); return s + f * this.segLen(j, d); }
+  locate(s, d = 0) {
+    const L = this.length(d); s = ((s % L) + L) % L;
+    for (let j = 0; j < this.segs; j++) { const len = this.segLen(j, d); if (s <= len || j === this.segs - 1) return { i: j, f: len > 0 ? Math.min(1, s / len) : 0 }; s -= len; }
+    return { i: this.segs - 1, f: 1 };
+  }
+  at(s, d = 0) { const { i, f } = this.locate(s, d); return { ...this.point(i, f, d), s }; }
+  samples({ straightStep = 8, cornerSteps = 40 } = {}) {
+    const out = [];
+    for (let j = 0; j < this.segs; j++) {
+      const n = j % 2 ? cornerSteps : Math.max(1, Math.ceil(this.segLen(j) / straightStep));
+      for (let k = 0; k < n; k++) out.push({ i: j, f: k / n });
+    }
+    out.push({ i: this.segs - 1, f: 1 });
+    return out;
+  }
+}
+const norm = ([x, z]) => { const l = Math.hypot(x, z) || 1; return [x / l, z / l]; };
+
+/* ---------- Design defaults (research _designGuideDefaults) ---------- */
+
+export const DESIGN = {
+  eye: 1.1,        // modelled: seated eye height above the tread, estimated from SGSA Accessible Stadia figures
+  standEye: 1.62,  // modelled assumption: standing eye height
+  tread: 0.8,      // design-guide default: FIFA minimum row depth, 800 mm
+  c: 0.09,         // design-guide default: FIFA preferred C-value, 90 mm (60 minimum, 120 optimal)
+  cMin: 0.06, cOpt: 0.12,
+  maxRake: 35,     // stated for Tottenham and quoted by Populous as the UK maximum, 35 degrees
+};
+const rad = (deg) => deg * Math.PI / 180;
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
 /* ---------- Tier maths ---------- */
 
-// A tier is a run of stepped rows. Row i: tread from d0 + i*depth to d0 + (i+1)*depth
-// at height y(i) = y0 + rise*i + curve*i*i (a gentle parabola, like a real sightline rake).
-export const rowY = (t, i) => t.y0 + t.rise * i + t.curve * i * i;
+// A tier is a run of stepped rows. Row i: tread from rowD(i) to rowD(i + 1) at height
+// rowY(i). Designed tiers carry their heights in ys (from designTier()); older ones use
+// y0 + rise * i + curve * i * i.
+export const rowY = (t, i) => {
+  if (t.ys) {
+    const n = t.ys.length;
+    if (i < n) return t.ys[Math.max(0, i)];
+    return t.ys[n - 1] + (i - n + 1) * (t.ys[n - 1] - t.ys[n - 2] || 0.4);
+  }
+  return t.y0 + t.rise * i + t.curve * i * i;
+};
 export const rowD = (t, i) => t.d0 + i * t.depth;
 export const tierBackD = (t) => t.d0 + t.rows * t.depth;
 export const seatD = (t, i) => rowD(t, i) + t.depth * 0.42;
 
-const SEATED_EYE = 1.18; // above the tread
-const STANDING_EYE = 1.62;
-
-const ROWS = { front: 0, middle: 1, back: 2 };
-const POS = { left: -1, centre: 0, right: 1 };
-export const ROW_KEYS = ['front', 'middle', 'back'];
-export const POS_KEYS = ['left', 'centre', 'right'];
-
-// Moves arc position s along the ring towards the viewer's left or right.
-function shiftAlong(ring, s, d, dir, metres, focal) {
-  if (!dir) return s;
-  const p = ring.at(s, d);
-  // Viewer faces the focal point; their right is forward x up = (-fz, 0, fx).
-  const fx = focal.x - p.x; const fz = focal.z - p.z;
-  const rx = -fz; const rz = fx;
-  const sign = Math.sign(p.tx * rx + p.tz * rz) || 1;
-  return s + sign * dir * metres;
+// Designs a tier the way UK stands are designed: each riser makes the sightline from the
+// eye of row i over the head of row i - 1 to the focal point clear it by c, capped at the
+// maximum rake. focalD: horizontal distance from the ring line (d = 0) to the focal point
+// (nearest touchline, stage front, floor edge). fixedRake: a stated rake in degrees.
+export function designTier(o) {
+  const t = { id: o.id, d0: o.d0, rows: o.rows, depth: o.depth ?? DESIGN.tread, rise: 0, curve: 0,
+    focalD: o.focalD ?? 1, focalY: o.focalY ?? 0, eye: o.eye ?? DESIGN.eye, c: o.c ?? DESIGN.c,
+    maxRake: o.maxRake ?? DESIGN.maxRake, fixedRake: o.fixedRake ?? null, label: o.label || '' };
+  const T = t.depth; const maxR = T * Math.tan(rad(t.maxRake));
+  const D = (i) => t.focalD + seatD(t, i);
+  const ys = [o.y0];
+  for (let i = 1; i < t.rows; i++) {
+    let R;
+    if (t.fixedRake != null) R = T * Math.tan(rad(t.fixedRake));
+    else {
+      const Np = ys[i - 1] + t.eye - t.focalY;
+      R = (Np + t.c) * (D(i) / D(i - 1)) - Np;
+    }
+    ys.push(ys[i - 1] + clamp(R, o.minRise ?? 0.12, maxR));
+  }
+  t.ys = ys; t.y0 = ys[0];
+  return t;
 }
 
-// Aim point: the focal point pushed a little beyond, so a seat looks across the action
-// rather than down at a single spot (focal.push metres, horizontally away from the seat).
-function aimAt(x, z, focal) {
-  const dx = focal.x - x; const dz = focal.z - z; const L = Math.hypot(dx, dz) || 1;
-  const k = focal.push || 0;
-  return [focal.x + (dx / L) * k, focal.y, focal.z + (dz / L) * k];
+// Sightline C-value (metres) for row i of a designed tier, against its focal point.
+export function cValue(t, i) {
+  if (!t || !t.ys || i < 1) return null;
+  const R = rowY(t, i) - rowY(t, i - 1);
+  const D = (t.focalD ?? 1) + seatD(t, i);
+  const N = rowY(t, i) + (t.eye ?? DESIGN.eye) - (t.focalY ?? 0);
+  return R - N * t.depth / D;
+}
+export const rakeDeg = (t, i) => (i < 1 ? null : Math.atan((rowY(t, i) - rowY(t, i - 1)) / t.depth) * 180 / Math.PI);
+
+/* ---------- Seat slots (shared by the 3D bowl and the seat map) ---------- */
+
+// Seats sit on 500 mm centres (design standard minimum, FIFA and the Green Guide for new
+// stands), stretched evenly to fill each block; aisles are 1.15 m wide (modelled) and a
+// vomitory mouth clears 1.35 m either side of its radial line (modelled).
+export const SEAT_W = 0.5; export const AISLE_W = 1.15; export const VOM_HALF = 1.35;
+
+// Every seat of a tier: rows of seats between aisle radial lines, split round vomitories,
+// limited by allow(point). opts.radials is a list of { i, f } ring positions or a function
+// of the row index (block runs differ by row). Returns
+//   slots:  [{ x, y, z, nx, nz, row, tier, s, w, angle, mid0 }]  (mid0: arc length at d = 0
+//           of the middle of the aisle-to-aisle stretch, which names the block)
+//   pieces: [{ row, p0, p1, w, first, count, dS, y }] runs of seats for the distant band
+//   steps:  aisle half-steps; voms: the radial lines that carry a vomitory.
+export function tierSlots(ring, t, opts = {}) {
+  const radialsAt = typeof opts.radials === 'function' ? opts.radials : (() => opts.radials || ring.radials());
+  const allow = opts.allow || null; const N = t.rows; const Lr0 = ring.length(0);
+  const voms = [];
+  if (opts.vom) {
+    radialsAt(opts.vom.rows[0]).forEach((r, k) => {
+      if (k % opts.vom.every !== Math.floor(opts.vom.every / 2)) return;
+      if (opts.vom.straightOnly !== false && r.i % 2 === 1) return;
+      if (allow && !allow(ring.point(r.i, r.f, t.d0))) return;
+      if (opts.vom.allow && !opts.vom.allow(ring.point(r.i, r.f, t.d0))) return;
+      voms.push(r);
+    });
+  }
+  const splitAllowed = (a0, a1, dS) => {
+    const out = []; let cur = null;
+    for (let s = a0; s < a1 - 1e-6; s += 0.5) {
+      const m = Math.min(s + 0.5, a1);
+      if (allow(ring.at((s + m) / 2, dS))) { if (cur) cur[1] = m; else cur = [s, m]; } else if (cur) { out.push(cur); cur = null; }
+    }
+    if (cur) out.push(cur);
+    return out;
+  };
+  const slots = []; const pieces = []; const steps = [];
+  for (let i = 0; i < N; i++) {
+    const radials = radialsAt(i); if (!radials || !radials.length) continue;
+    const dS = seatD(t, i); const y = rowY(t, i);
+    const sList = radials.map((r) => ring.sOf(r.i, r.f, dS));
+    const s0List = radials.map((r) => ring.sOf(r.i, r.f, 0));
+    const Ltot = ring.length(dS);
+    const vomS = voms.map((r) => ring.sOf(r.i, r.f, dS));
+    const inVomRow = opts.vom && i >= opts.vom.rows[0] && i <= opts.vom.rows[1];
+    for (let a = 0; a < sList.length; a++) {
+      const s0 = sList[a] + AISLE_W / 2;
+      const s1 = (a + 1 < sList.length ? sList[a + 1] : sList[0] + Ltot) - AISLE_W / 2;
+      if (s1 - s0 < SEAT_W) continue;
+      const e0 = s0List[a]; const e1 = a + 1 < s0List.length ? s0List[a + 1] : s0List[0] + Lr0;
+      const mid0 = (((e0 + e1) / 2) % Lr0 + Lr0) % Lr0;
+      // Half-step in the aisle at the start of this block (between rows).
+      if (i < N - 1) {
+        const p = ring.at(sList[a], rowD(t, i) + t.depth * 0.75);
+        if (!allow || allow(p)) steps.push({ x: p.x, z: p.z, y0: y, y1: y + (rowY(t, i + 1) - y) / 2, d: t.depth * 0.5, nx: p.nx, nz: p.nz });
+      }
+      let parts = [[s0, s1]];
+      if (allow) parts = splitAllowed(s0, s1, dS);
+      if (inVomRow) {
+        vomS.forEach((vs) => {
+          for (let q = parts.length - 1; q >= 0; q--) {
+            const [a0, a1] = parts[q]; const v0 = vs - VOM_HALF; const v1 = vs + VOM_HALF;
+            if (v1 <= a0 || v0 >= a1) continue;
+            parts.splice(q, 1);
+            if (v0 - a0 > SEAT_W) parts.push([a0, v0]);
+            if (a1 - v1 > SEAT_W) parts.push([v1, a1]);
+          }
+        });
+        parts.sort((u, v) => u[0] - v[0]);
+      }
+      parts.forEach(([p0, p1]) => {
+        const n = Math.floor((p1 - p0) / SEAT_W);
+        if (n < 1) return;
+        const w = (p1 - p0) / n; const first = slots.length;
+        for (let k = 0; k < n; k++) {
+          const s = p0 + (k + 0.5) * w; const p = ring.at(s, dS);
+          slots.push({ x: p.x, y, z: p.z, nx: p.nx, nz: p.nz, row: i, tier: t.id, s, angle: Math.atan2(p.z, p.x), w, mid0 });
+        }
+        pieces.push({ row: i, p0, p1, w, first, count: n, dS, y });
+      });
+    }
+  }
+  return { slots, pieces, steps, voms };
 }
 
-// Builds a camera spec from a ring position.
-function bowlSeat(ring, tier, rowIndex, s, d, { eye = SEATED_EYE, focal, foreground, extra = {} }) {
-  const p = ring.at(s, d);
-  const y = rowY(tier, rowIndex) + eye;
-  return {
-    position: [p.x, y, p.z],
-    target: aimAt(p.x, p.z, focal),
-    normal: [p.nx, 0, p.nz],
-    foreground,
-    rowIndex,
-    tierId: tier.id,
-    snapTier: tier.id, eye,
-    ...extra,
+/* ---------- Block runs (js/data/seatmaps.js) ---------- */
+
+// Each run as arcs at d = 0: { ...run, arc, rows, blocks: [{ id, arc, status, ord }] }.
+function runsFor(L, venueId) {
+  const data = SEATMAPS[venueId];
+  if (!data?.runs || !L.ring || L.archetype === 'racecourse') return [];
+  const ring = L.ring; const Lr = ring.length(0);
+  return data.runs.map((r, k) => {
+    let a = ring.sOf(r.from[0], r.from[1]); let b = ring.sOf(r.to[0], r.to[1]);
+    if (b <= a + 1e-6) b += Lr;
+    if (r.span) { const w0 = b - a; [a, b] = [a + w0 * r.span[0], a + w0 * r.span[1]]; }
+    const n = r.ids.length; const w = (b - a) / n; const t = L.tiers[r.tier];
+    const stated = new Set(r.stated === 'all' ? r.ids.map(String) : (r.stated || []).map(String));
+    const blocks = r.ids.map((id, j) => {
+      const q = r.order === 'cw' ? n - 1 - j : j;
+      return { id: String(id), arc: [a + w * q, a + w * (q + 1)], status: stated.has(String(id)) ? (r.statedAs || 'stated') : 'modelled', ord: j };
+    });
+    return { ...r, k, arc: [a, b], rows: r.rows || [0, (t?.rows || 1) - 1], blocks };
+  });
+}
+
+// Arc at d = 0 covering the named blocks of a venue's runs (for product sections).
+function blockSpan(ring, venueId, tierId, ids) {
+  const Lr = ring.length(0); let lo = Infinity; let hi = -Infinity;
+  (SEATMAPS[venueId]?.runs || []).filter((r) => r.tier === tierId).forEach((r) => {
+    let a = ring.sOf(r.from[0], r.from[1]); let b = ring.sOf(r.to[0], r.to[1]); if (b <= a + 1e-6) b += Lr;
+    if (r.span) { const w0 = b - a; [a, b] = [a + w0 * r.span[0], a + w0 * r.span[1]]; }
+    const n = r.ids.length; const w = (b - a) / n;
+    r.ids.forEach((id, j) => { if (!ids.includes(String(id))) return; const q = r.order === 'cw' ? n - 1 - j : j; lo = Math.min(lo, a + w * q); hi = Math.max(hi, a + w * (q + 1)); });
+  });
+  return Number.isFinite(lo) ? [lo + 0.5, hi - 0.5] : null;
+}
+
+// The aisle radial lines of a tier for a given row: every block edge of the runs that cover
+// that row, in ring order. Returns a function of the row index, or null (no runs).
+export function tierRadials(L, tierId) {
+  const runs = (L.runs || []).filter((r) => r.tier === tierId);
+  if (!runs.length) return null;
+  const ring = L.ring; const Lr = ring.length(0); const cache = new Map();
+  return (i) => {
+    const on = runs.filter((r) => i >= r.rows[0] && i <= r.rows[1]);
+    const key = on.map((r) => r.k).join(',');
+    if (cache.has(key)) return cache.get(key);
+    const ss = [];
+    on.forEach((r) => r.blocks.forEach((b) => ss.push(b.arc[0], b.arc[1])));
+    const sorted = ss.map((s) => ((s % Lr) + Lr) % Lr).sort((x, y) => x - y);
+    const uniq = [];
+    sorted.forEach((s) => { if (!uniq.length || s - uniq[uniq.length - 1] > 0.05) uniq.push(s); });
+    if (uniq.length > 1 && uniq[0] + Lr - uniq[uniq.length - 1] < 0.05) uniq.pop();
+    const out = uniq.map((s) => ring.locate(s, 0));
+    cache.set(key, out);
+    return out;
   };
 }
 
-/* ---------- Stadium ---------- */
-
-const STADIUM_RING = new Ring(60, 42, 16);
-const ST_LOWER = { id: 'lower', d0: 0.6, rows: 20, depth: 0.8, y0: 1.35, rise: 0.34, curve: 0.006, frontWall: 1.1 };
-const ST_UPPER = { id: 'upper', d0: 17.4, rows: 24, depth: 0.78, y0: 16.1, rise: 0.38, curve: 0.0045 };
-const ST_BOX = { d0: tierBackD(ST_LOWER), balconyRows: 2, balconyY: [10.9, 11.3], glassD: 18.6, floorY: 11.65, glassTop: 14.6, backD: 25.0 };
-const ST_ROOF = { backD: tierBackD(ST_UPPER) + 1.2, backY: 34.2, frontD: -3.0, frontY: 32.9, depthBack: 3.6, depthFront: 1.1 };
-
-function stadiumFocal(mode) {
-  return mode === 'concert' ? { x: 44, y: 8.5, z: 0 } : { x: 0, y: 1.2, z: 0, push: 9 };
+// Everything tierSlots needs for one tier, exactly as the 3D builder uses it.
+export function tierBuildOpts(L, tierId) {
+  const o = L.tierOpts?.[tierId] || {};
+  return { radials: tierRadials(L, tierId) || o.radials || L.ring.radials(), vom: o.vom || null, allow: o.allow || null };
 }
 
-const STADIUM = {
-  id: 'stadium',
-  ring: STADIUM_RING,
-  pitch: { hx: 52.5, hz: 34 },
-  tiers: { lower: ST_LOWER, upper: ST_UPPER },
-  box: ST_BOX,
-  roof: ST_ROOF,
-  stage: { frontX: 33, backX: 50, hz: 24, deck: 2.4 },
-  focal: stadiumFocal,
-  areas: {
-    'premium-lounge': {
-      foreground: 'premium',
-      seat(mode, row, pos) {
-        const t = ST_LOWER; const i = [6, 10, 14][ROWS[row]];
-        const d = seatD(t, i); const f = stadiumFocal(mode);
-        let s = STADIUM_RING.sNear(-2, -60, d);
-        s = shiftAlong(STADIUM_RING, s, d, POS[pos], 9, f);
-        return bowlSeat(STADIUM_RING, t, i, s, d, { focal: f, foreground: 'premium', extra: { padded: true } });
-      },
-    },
-    pitchside: {
-      foreground: 'pitchside',
-      seat(mode, row, pos) {
-        const t = ST_LOWER; const i = [0, 2, 4][ROWS[row]];
-        const d = seatD(t, i); const f = stadiumFocal(mode);
-        let s = STADIUM_RING.sNear(24, -60, d);
-        s = shiftAlong(STADIUM_RING, s, d, POS[pos], 8, f);
-        return bowlSeat(STADIUM_RING, t, i, s, d, { focal: f, foreground: 'pitchside' });
-      },
-    },
-    'private-box': {
-      foreground: 'box',
-      seat(mode, row, pos) {
-        const f = stadiumFocal(mode);
-        const b = ST_BOX;
-        const r = ROWS[row];
-        // front = balcony seat outside the glass, middle = at the table, back = standing at the bar.
-        const d = r === 0 ? ST_LOWER.d0 + ST_LOWER.rows * ST_LOWER.depth + 1.15 : r === 1 ? b.glassD + 2.0 : b.glassD + 3.7;
-        let s = STADIUM_RING.sNear(-20, -60, d);
-        s = shiftAlong(STADIUM_RING, s, d, POS[pos], 7, f);
-        const p = STADIUM_RING.at(s, d);
-        const y = r === 0 ? b.balconyY[1] + SEATED_EYE : r === 1 ? b.floorY + 1.22 : b.floorY + STANDING_EYE;
-        return {
-          position: [p.x, y, p.z], target: aimAt(p.x, p.z, f), normal: [p.nx, 0, p.nz],
-          foreground: r === 0 ? 'balcony' : 'box', boxRow: r, tierId: 'box',
-          railDist: d - (b.d0 + 0.05), railY: b.balconyY[0] + 0.9,
-          snapTier: r === 0 ? 'balcony' : null, eye: SEATED_EYE,
-          glassDist: d - b.glassD, floorY: b.floorY, ceilY: b.glassTop + 0.15,
-        };
-      },
-    },
-    'upper-tier': {
-      foreground: 'upper',
-      seat(mode, row, pos) {
-        const t = ST_UPPER; const i = [2, 12, 20][ROWS[row]];
-        const d = seatD(t, i); const f = stadiumFocal(mode);
-        let s = STADIUM_RING.sNear(-80, 0, d);
-        s = shiftAlong(STADIUM_RING, s, d, POS[pos], 11, f);
-        return bowlSeat(STADIUM_RING, t, i, s, d, { focal: f, foreground: 'upper' });
-      },
-    },
-  },
-};
+/* ---------- Seat choices ---------- */
 
-/* ---------- Arena ---------- */
+export const ROW_KEYS = ['front', 'middle', 'back'];
+export const POS_KEYS = ['left', 'centre', 'right'];
+const POS_U = { left: 0.15, centre: 0.5, right: 0.85 };
 
-const ARENA_RING = new Ring(36, 23, 17);
-const AR_LOWER = { id: 'lower', d0: 0.5, rows: 18, depth: 0.82, y0: 1.3, rise: 0.36, curve: 0.006, frontWall: 1.1 };
-const AR_UPPER = { id: 'upper', d0: 16.8, rows: 22, depth: 0.78, y0: 14.6, rise: 0.44, curve: 0.006 };
-const AR_SUITE = { d0: tierBackD(AR_LOWER), seatRows: 2, seatY: [9.4, 9.8], glassD: 17.2, floorY: 10.1, glassTop: 13.3, backD: 23.5 };
-
-function arenaFocal(mode) {
-  return mode === 'boxing' ? { x: 0, y: 1.6, z: 0 } : { x: 29, y: 6.5, z: 0 };
+// Row choice to an index 0..n-1. row: 'front' | 'middle' | 'back' | a row number (1-based).
+export function rowIndex(row, n) {
+  if (n <= 1) return 0;
+  const k = Number(row);
+  if (Number.isFinite(k) && k >= 1) return clamp(Math.round(k) - 1, 0, n - 1);
+  if (row === 'front') return 0;
+  if (row === 'back') return n - 1;
+  return Math.floor((n - 1) / 2);
+}
+// Position choice to a fraction 0..1 along the row, from the viewer's left.
+export function posFrac(pos) {
+  if (pos in POS_U) return POS_U[pos];
+  const k = Number(pos);
+  return Number.isFinite(k) ? clamp(k / 100, 0, 1) : 0.5;
 }
 
-const ARENA = {
-  id: 'arena',
-  ring: ARENA_RING,
-  floor: { hx: 34, hz: 21 },
-  tiers: { lower: AR_LOWER, upper: AR_UPPER },
-  suite: AR_SUITE,
-  roofY: 38,
-  stage: { frontX: 23, backX: 34, hz: 12, deck: 1.9 },
-  ring3: { half: 3.65, apron: 4.6, deck: 1.15 }, // the boxing ring
-  focal: arenaFocal,
-  areas: {
-    'private-suite': {
-      foreground: 'suite',
-      seat(mode, row, pos) {
-        const f = arenaFocal(mode); const r = ROWS[row]; const b = AR_SUITE;
-        const d = r === 0 ? b.d0 + 0.45 : r === 1 ? b.d0 + 1.25 : b.glassD + 2.0;
-        let s = ARENA_RING.sNear(mode === 'boxing' ? -6 : 8, -60, d);
-        s = shiftAlong(ARENA_RING, s, d, POS[pos], 6, f);
-        const p = ARENA_RING.at(s, d);
-        const y = r === 0 ? b.seatY[0] + SEATED_EYE : r === 1 ? b.seatY[1] + SEATED_EYE : b.floorY + 1.22;
-        return {
-          position: [p.x, y, p.z], target: aimAt(p.x, p.z, f), normal: [p.nx, 0, p.nz],
-          foreground: r === 2 ? 'box' : 'suite-seats', boxRow: r, tierId: 'suite',
-          railDist: d - (b.d0 + 0.05), railY: b.seatY[0] + 0.9,
-          snapTier: r < 2 ? 'suite-seats' : null, eye: SEATED_EYE,
-          glassDist: d - b.glassD, floorY: b.floorY, ceilY: b.glassTop + 0.15,
-        };
-      },
-    },
-    'premium-lower': {
-      foreground: 'premium',
-      seat(mode, row, pos) {
-        const t = AR_LOWER; const i = [3, 7, 11][ROWS[row]];
-        const d = seatD(t, i); const f = arenaFocal(mode);
-        let s = mode === 'boxing' ? ARENA_RING.sNear(-40, -40, d) : ARENA_RING.sNear(-8, -60, d);
-        s = shiftAlong(ARENA_RING, s, d, POS[pos], 6, f);
-        return bowlSeat(ARENA_RING, t, i, s, d, { focal: f, foreground: 'premium', extra: { padded: true } });
-      },
-    },
-    floor: {
-      foreground: 'floor',
-      seat(mode, row, pos) {
-        const f = arenaFocal(mode); const r = ROWS[row]; const p = POS[pos];
-        if (mode === 'boxing') {
-          // Ringside rows on the -z side of the ring, facing it.
-          const z = -(ARENA.ring3.apron + 2.2 + r * 1.9);
-          const x = p * 3.2;
-          return {
-            position: [x, 0.25 + SEATED_EYE - 0.1, z], target: [f.x, f.y + 0.4, f.z], normal: [0, 0, -1],
-            foreground: 'ringside', rowIndex: r, tierId: 'floor',
-          };
-        }
-        const x = [17.5, 8, -4][r];
-        const z = p * -6;
-        return {
-          position: [x, STANDING_EYE + 0.05, z], target: [f.x, f.y, f.z * 0.4], normal: [-1, 0, 0],
-          foreground: 'floor', rowIndex: r, tierId: 'floor',
-        };
-      },
-    },
-    'upper-tier': {
-      foreground: 'upper',
-      seat(mode, row, pos) {
-        const t = AR_UPPER; const i = [2, 12, 19][ROWS[row]];
-        const d = seatD(t, i); const f = arenaFocal(mode);
-        let s = ARENA_RING.sNear(mode === 'boxing' ? 10 : -14, 60, d);
-        s = shiftAlong(ARENA_RING, s, d, POS[pos], 8, f);
-        return bowlSeat(ARENA_RING, t, i, s, d, { focal: f, foreground: 'upper' });
-      },
-    },
-  },
-};
+/* ---------- Shared seat helpers ---------- */
 
-/* ---------- Concert hall (an illustrative elliptical hall, not a survey of any venue) ---------- */
+function aimAt(p, poi) { return [poi.x, poi.y, poi.z]; }
 
-const HALL_RING = new Ring(16, 13, 12.5);
-// Half angle (radians, measured on the ring normal) of the organ arc behind the stage,
-// where the box tiers and the circle stop and the organ case stands instead.
-const HA_ORGAN = 0.62;
-const HA_LOWER = { id: 'lower', d0: 0.6, rows: 12, depth: 0.85, y0: 1.0, rise: 0.42, curve: 0.006 };
-const HA_BOXES = [
-  { id: 'box1', frontD: 10.2, backD: 13.4, floorY: 9.0, ceilY: 11.9, pitch: 3.3 },
-  { id: 'box2', frontD: 11.0, backD: 14.2, floorY: 12.2, ceilY: 15.0, pitch: 3.3 },
-];
-const HA_CIRCLE = { id: 'circle', d0: 11.8, rows: 9, depth: 0.9, y0: 15.9, rise: 0.5, curve: 0.01 };
-// The colonnade stands at the back of the gallery (colD), behind the standing rows.
-const HA_GALLERY = { d0: tierBackD(HA_CIRCLE), backD: 23.6, floorY: 22.8, colD: 23.05, colTop: 27.2 };
-const HA_DOME = { springD: 23.6, springY: 27.6, apexY: 42, topD: -9.6 };
-const HA_STAGE = { frontX: 3.6, bow: 0.04, deck: 1.2, conductor: [5.0, 0] };
-export const HA_PARAPET = 0.85; // box parapet height above the box floor
-
-const hallFocal = () => ({ x: 9.0, y: 2.4, z: 0 });
-// Gallery colonnade: column k stands at arc length (k + 0.5) * step (offset colD).
-export function hallColumns() {
-  const L0 = HALL_RING.length(HA_GALLERY.colD); const n = Math.round(L0 / 3.1);
-  return { n, step: L0 / n };
+function tierSeatAt(L, t, i, s, extra = {}) {
+  const ring = L.ring; const { i: si, f } = ring.locate(s, 0); const d = seatD(t, i);
+  const p = ring.point(si, f, d);
+  const eye = extra.eye ?? t.eye ?? DESIGN.eye;
+  return { position: [p.x, rowY(t, i) + eye, p.z], normal: [p.nx, 0, p.nz], rowIndex: i, tierId: t.id, snapTier: t.id, eye, tier: t, ...extra };
 }
+
+function sectionArc(L, sec, block) {
+  let [a, b] = sec.arc;
+  const bs = sec.blocks && L.blocks?.[sec.blocks];
+  if (bs && block) {
+    const k = bs.ids.indexOf(String(block));
+    if (k >= 0) {
+      const w = (bs.arc[1] - bs.arc[0]) / bs.ids.length;
+      a = bs.arc[0] + w * k + 0.6; b = a + w - 1.2;
+    }
+  }
+  return [a, b];
+}
+
+/* ---------- Tottenham Hotspur Stadium ---------- */
+
+function tottenham() {
+  // Stated: pitch 105 x 68 m inside a grass area of 114.58 x 79.84 m (planning statement).
+  // The ring is the edge of that grass area. Corner radius modelled.
+  const ring = new Ring(57.29, 39.92, 12);
+  const pitch = { hx: 52.5, hz: 34 };
+  // Distance from the ring line to the nearest touchline (sides) and goal line (ends).
+  const sideGap = ring.hz - pitch.hz; const endGap = ring.hx - pitch.hx;
+  // Multi-tier stands (East, West, North). Front row about 6.8 m from the touchline at the
+  // sides (stated range 4.9 to 6.9 m). Levels 1 to 5 stated; tier heights modelled so the
+  // top of Level 5 sits near the stated 33.2 to 35.5 m stand heights.
+  const l1 = designTier({ id: 'l1', label: 'Level 1', d0: 0.6, y0: 1.0, rows: 18, focalD: sideGap });
+  const l2 = designTier({ id: 'l2', label: 'Levels 2 and 3', d0: tierBackD(l1) + 0.8, y0: rowY(l1, l1.rows - 1) + 2.2, rows: 8, depth: 0.9, focalD: sideGap });
+  const lounge = { glassD: tierBackD(l2) + 0.4, floorY: rowY(l2, l2.rows - 1), top: rowY(l2, l2.rows - 1) + 3.6, backD: tierBackD(l2) + 7.5 };
+  // Level 4: four rows (modelled; The H Club is entered at Row 3, measured, so there are at
+  // least three), the last two in front of the suites.
+  const l4 = designTier({ id: 'l4', label: 'Level 4', d0: lounge.glassD - 0.2, y0: lounge.top + 0.45, rows: 4, depth: 1.0, focalD: sideGap });
+  const suites = { glassD: tierBackD(l4) + 0.35, floorY: rowY(l4, 3), top: rowY(l4, 3) + 2.9, backD: tierBackD(l4) + 6.5 };
+  // Level 5 starts far enough back that its front row still clears the near touchline at
+  // the 35 degree cap (eye height over distance about 0.62, a C-value near 60 mm).
+  const l5y = suites.top + 1.0;
+  const l5 = designTier({ id: 'l5', label: 'Level 5', d0: Math.max(suites.glassD + 0.6, (l5y + DESIGN.eye) / 0.62 - sideGap - 0.34), y0: l5y, rows: 16, focalD: sideGap });
+  // South Stand: stated single tier raked at 34 degrees, 34.1 m high. Rows modelled.
+  const s1 = designTier({ id: 's1', label: 'South Stand', d0: 0.6, y0: 1.0, rows: 58, fixedRake: 34, focalD: endGap });
+  const roof = { frontD: -1.5, frontY: 39.5, backY: 41.5 }; // modelled; stated overall height 48 m
+  const Lr = ring.length(0);
+  // The South Stand runs from the middle of the south-west corner to the middle of the
+  // south-east corner (modelled split); the multi-tier stands cover the rest.
+  const sArc = [ring.sOf(5, 0.5), ring.sOf(7, 0.5)];
+  const mArc = [sArc[1], sArc[0] + Lr];
+  const stands = [
+    { id: 'multi', arc: mArc, tiers: ['l1', 'l2', 'l4', 'l5'], backD: tierBackD(l5) + 1.2 },
+    { id: 'south', arc: sArc, tiers: ['s1'], backD: tierBackD(s1) + 1.2 },
+  ];
+  const side = (sd, a, b) => sideArc(ring, sd, a, b);
+  const T = { l1, l2, l4, l5, s1 };
+  const tierSec = (tier, arc, rows, extra = {}) => ({ kind: 'tier', tier, arc, rows: rows || [0, T[tier].rows - 1], ...extra });
+  const sections = {
+    // The Tunnel Club's first row is Row 3 (measured, AccessAble).
+    'w-l1-dugout': tierSec('l1', side('w', 18, 4), [2, 9], { fg: 'front', padded: true }),
+    'e-l1': tierSec('l1', side('e', 18, 42), null, { fg: 'standard' }),
+    'n-l1': tierSec('l1', side('n', 22, -22), null, { fg: 'standard', modes: ['football', 'nfl'] }),
+    'ne-l1': tierSec('l1', [ring.sOf(1, 0.12), ring.sOf(1, 0.88)], null, { fg: 'standard' }),
+    's-l1': tierSec('s1', side('s', -28, 28), null, { fg: 'standard' }),
+    'e-l2': tierSec('l2', side('e', -11, 11), [0, 3], { fg: 'premium', padded: true }),
+    'e-l3': tierSec('l2', side('e', -11, 11), [4, 7], { fg: 'premium', padded: true }),
+    'w-l3': tierSec('l2', side('w', 11, -11), [4, 7], { fg: 'premium', padded: true }),
+    'e-l2-quarter': tierSec('l2', side('e', 13, 32), [0, 7], { fg: 'premium', padded: true }),
+    'w-l2-quarter': tierSec('l2', side('w', -13, -32), [0, 7], { fg: 'premium', padded: true }),
+    'e-loge': { kind: 'room', band: 'lounge', arc: side('e', -34, -14) },
+    // West Level 4 suites sit south of The H Club (modelled), which takes Blocks 407 to 410.
+    'w-l4': { kind: 'room', band: 'suites', arc: side('w', -2, -40) },
+    'e-l4': { kind: 'room', band: 'suites', arc: side('e', -24, 24) },
+    // The H Club: West Stand Level 4, Blocks 407 to 410, entered at Row 3 (measured, AccessAble).
+    'w-l4-club': tierSec('l4', blockSpan(ring, 'tottenham-hotspur-stadium', 'l4', ['407', '408', '409', '410']), [0, 3], { fg: 'premium', padded: true }),
+    'sw-booth': { kind: 'room', band: 'suites', arc: [ring.sOf(5, 0.1), ring.sOf(5, 0.45)] },
+    'w-l5-front': tierSec('l5', side('w', 9, -9), [0, 3], { fg: 'premium', padded: true }),
+    'e-l5-front': tierSec('l5', side('e', -9, 9), [0, 3], { fg: 'premium', padded: true }),
+    'e-l5': tierSec('l5', side('e', 16, 40), null, { fg: 'upper' }),
+    'n-l5': tierSec('l5', side('n', 20, -20), null, { fg: 'upper', modes: ['football', 'nfl'] }),
+    floor: { kind: 'floor' },
+  };
+  const bands = {
+    // The Level 2 and 3 lounges behind the club rows: loge suites use the last two Level 2
+    // rows (East Level 2 is measured, AccessAble).
+    lounge: { tier: 'l2', seatRows: [2, 3], glassD: lounge.glassD, floorY: lounge.floorY, top: lounge.top, backD: lounge.backD, pitch: 5.2 },
+    suites: { tier: 'l4', seatRows: [2, 3], glassD: suites.glassD, floorY: suites.floorY, top: suites.top, backD: suites.backD, pitch: 5.6 },
+  };
+  // How each tier is built (the 3D bowl and the seat map both read this). Vomitories sit away
+  // from the middle rows, so a default seat is not beside a tunnel mouth.
+  const angleOf = (p) => Math.abs(Math.atan2(p.nz, p.nx));
+  const inSouth = (p) => angleOf(p) >= Math.PI * 0.75; const inMulti = (p) => !inSouth(p);
+  const tierOpts = {
+    l1: { allow: inMulti, vom: { every: 3, rows: [12, 14] } },
+    l2: { allow: inMulti }, l4: { allow: inMulti },
+    l5: { allow: inMulti, vom: { every: 3, rows: [10, 12] } },
+    s1: { allow: inSouth, vom: { every: 3, rows: [18, 20] } },
+  };
+  const stage = { frontX: 30, backX: 50, hz: 24, deck: 2.4 }; // modelled: the venue does not publish the stage end
+  // NFL (design standard: the NFL rulebook): 120 x 53 1/3 yards including the end zones,
+  // 10-yard end zones, hash marks 70 ft 9 in from each sideline, goalposts on the end lines.
+  // Stated: the NFL field sits 1.6 m below the grass, which slides away under the South
+  // Stand. The field runs along the pitch's long axis (x) like the football pitch (modelled).
+  const YD = 0.9144;
+  const nfl = { hx: 60 * YD, hz: (160 / 6) * YD, endZone: 10 * YD, level: -1.6, hashZ: (160 / 2 - 70.75) * 0.3048, yd: YD };
+  // Design points for NFL sightlines: the nearest sideline (sides) or end line (ends).
+  const nflFocal = (t) => (t.id === 's1' ? { focalD: ring.hx - nfl.hx, focalY: nfl.level } : { focalD: ring.hz - nfl.hz, focalY: nfl.level });
+  return {
+    id: 'tottenham-hotspur-stadium', archetype: 'stadium', ring, pitch, tiers: T, lounge, suites, roof, stands, sections, bands, stage, nfl, tierOpts, inSouth, inMulti,
+    dugouts: { home: 11, away: -11 },
+    focal: (mode) => (mode === 'concert'
+      ? { x: stage.frontX + 2, y: stage.deck + 1.7, z: 0, label: 'the front of the stage', floorY: 0 }
+      : mode === 'nfl'
+        ? { x: 0, y: nfl.level, z: 0, label: 'the 50-yard line, mid-field', floorY: nfl.level, floorWord: 'the field' }
+        : { x: 0, y: 0, z: 0, label: 'the centre spot', floorY: 0 }),
+    axis: (mode) => (mode === 'concert' ? { x: -1, z: 0, label: 'the stage’s centre line' }
+      : mode === 'nfl' ? { x: 0, z: 1, label: 'the 50-yard line', fold: true }
+        : { x: 0, z: 1, label: 'the halfway line', fold: true }),
+    designPoint: (t, mode) => (mode === 'nfl' ? (t.id === 's1' ? 'the end line' : 'the nearest sideline')
+      : t.id === 's1' ? 'the goal line' : 'the nearest touchline'),
+    // Per-mode sightline design point (the C-value is measured to it).
+    sightTo: (t, mode) => (mode === 'nfl' ? nflFocal(t) : null),
+    overview: { position: [-60, 210, 150], target: [0, 0, 6] },
+  };
+}
+
+// An arc [sA, sB] along a side, always increasing (it may run past the ring length).
+function sideArc(ring, sd, a, b) {
+  const A = ring.sAt(sd, a); let B = ring.sAt(sd, b);
+  if (B < A) B += ring.length(0);
+  return [A, B];
+}
+
+/* ---------- Arenas ---------- */
+
+// Shared arena kit: lower tier, a suite band (front seat rows plus glass suites), upper
+// tier, optional terraces at the top. Values per venue below; all modelled except where a
+// comment says stated. Design points (modelled): 6 m into the floor for the lower tiers,
+// 10 m for the upper tier, which starts far enough back to keep its sightline at 35 degrees.
+function arenaKit(o) {
+  const ring = new Ring(o.hx, o.hz, o.r);
+  const lower = designTier({ id: 'lower', label: o.lowerLabel, d0: 0.6, y0: 1.2, rows: o.lowerRows, focalD: 6 });
+  const sd0 = tierBackD(lower) + 0.3;
+  const band = designTier({ id: 'band', label: o.bandLabel, d0: sd0, y0: rowY(lower, lower.rows - 1) + 1.9, rows: o.bandRows || 2, depth: 0.95, focalD: 6 });
+  const suite = { d0: sd0, glassD: tierBackD(band) + 0.35, floorY: rowY(band, band.rows - 1), glassTop: rowY(band, band.rows - 1) + 3.0 };
+  suite.backD = suite.glassD + 5.5; suite.seatY = [rowY(band, 0), rowY(band, Math.min(1, band.rows - 1))];
+  const uy = suite.glassTop + 1.4;
+  const upper = designTier({ id: 'upper', label: o.upperLabel, d0: Math.max(suite.glassD - 0.8, (uy + DESIGN.eye) / 0.62 - 10 - 0.34), y0: uy, rows: o.upperRows, focalD: 10 });
+  const roofY = rowY(upper, upper.rows - 1) + o.roofGap;
+  const floor = { hx: o.hx - 2, hz: o.hz - 2 };
+  const stage = { frontX: o.hx - 13, backX: o.hx - 1.5, hz: Math.min(13, o.hz - 5), deck: 1.9 };
+  const Lr = ring.length(0);
+  // Seated blocks run anticlockwise round everything except the stage end.
+  const blocksArc = [ring.sOf(3, 0.85), ring.sOf(1, 0.15) + Lr];
+  return { ring, lower, band, suite, upper, roofY, floor, stage, Lr, blocksArc, ring3: { half: 3.65, apron: 4.6, deck: 1.15 } };
+}
+
+function arenaLayout(id, o, build) {
+  const K = arenaKit(o);
+  const { ring } = K;
+  const side = (sd, a, b) => sideArc(ring, sd, a, b);
+  const T = { lower: K.lower, band: K.band, upper: K.upper };
+  const sec = build({ ...K, side, T });
+  return {
+    id, archetype: 'arena', ring, tiers: T, suite: K.suite, roofY: K.roofY, floor: K.floor, stage: K.stage, ring3: K.ring3,
+    tierOpts: { lower: { vom: { every: 3, rows: [7, 9] } }, band: {}, upper: { vom: { every: 3, rows: [6, 8] } } },
+    terraces: sec.terraces || [], sections: sec.sections, blocks: sec.blocks, bands: {
+      suite: { tier: 'band', seatRows: [0, Math.min(1, K.band.rows - 1)], glassD: K.suite.glassD, floorY: K.suite.floorY, top: K.suite.glassTop, backD: K.suite.backD, pitch: 4.6 },
+    },
+    focal: (mode) => (mode === 'boxing'
+      ? { x: 0, y: K.ring3.deck + 1.2, z: 0, label: 'the centre of the ring', floorY: 0 }
+      : { x: K.stage.frontX + 1.5, y: K.stage.deck + 1.7, z: 0, label: 'the front of the stage', floorY: 0 }),
+    axis: (mode) => (mode === 'boxing' ? { square: true, label: 'the nearest side of the ring' } : { x: -1, z: 0, label: 'the stage’s centre line' }),
+    designPoint: () => 'the edge of the floor',
+    overview: { position: [-(o.hx + 40), 120, o.hz + 70], target: [4, 0, 0] },
+    notes: o.notes || [],
+  };
+}
+
+function theArenaLondon() {
+  return arenaLayout('the-arena-london', { hx: 34, hz: 23, r: 16, lowerRows: 22, bandRows: 2, upperRows: 22, roofGap: 7, lowerLabel: 'Level 1', bandLabel: 'Suite level', upperLabel: 'Level 4' }, ({ ring, side, T, blocksArc, Lr }) => {
+    const l4Arc = [blocksArc[0] + (blocksArc[1] - blocksArc[0]) * 0.12, blocksArc[0] + (blocksArc[1] - blocksArc[0]) * 0.88];
+    const blocks = {
+      // Stated block numbers (from the venue's bar locations); order round the bowl modelled,
+      // starting by the stage so Block 101 is "near the stage" (Club 101, stated).
+      l1: { tier: 'lower', ids: range(101, 116), arc: blocksArc },
+      l4: { tier: 'upper', ids: range(405, 417), arc: l4Arc },
+    };
+    void Lr;
+    return {
+      blocks,
+      sections: {
+        l1: { kind: 'tier', tier: 'lower', arc: blocksArc, rows: [0, T.lower.rows - 1], blocks: 'l1', fg: 'standard' },
+        'l1-terrace': { kind: 'tier', tier: 'lower', arc: blockArc(blocks.l1, ['107', '108']), rows: [T.lower.rows - 1, T.lower.rows - 1], fg: 'standard', stool: true },
+        l4: { kind: 'tier', tier: 'upper', arc: l4Arc, rows: [0, T.upper.rows - 1], blocks: 'l4', fg: 'upper' },
+        suites: { kind: 'room', band: 'suite', arc: side('w', 6, -14) },
+        'suites-side': { kind: 'room', band: 'suite', arc: side('e', -20, 2) },
+        floor: { kind: 'floor' },
+      },
+    };
+  });
+}
+
+function aoArena() {
+  // Stated: 100 level and 200 level, seats all round, end-stage blocks 102 to 115
+  // anticlockwise, main roof truss spans 105 m. The bowl is sized so the outside of the
+  // upper tier is about 105 m across the short way (modelled, from the truss span).
+  // Rows stated: lower tier A to X and upper tier A to R, skipping I and O (22 and 16 rows).
+  return arenaLayout('ao-arena', { hx: 31, hz: 19, r: 14, lowerRows: 22, bandRows: 2, upperRows: 16, roofGap: 6, lowerLabel: '100 level', bandLabel: 'Suite level', upperLabel: '200 level' }, ({ side, T, blocksArc }) => {
+    const blocks = {
+      l1: { tier: 'lower', ids: range(102, 115), arc: blocksArc },
+      l2: { tier: 'upper', ids: range(202, 215), arc: blocksArc },
+    };
+    return {
+      blocks,
+      sections: {
+        l1: { kind: 'tier', tier: 'lower', arc: blocksArc, rows: [0, T.lower.rows - 1], blocks: 'l1', fg: 'standard' },
+        l2: { kind: 'tier', tier: 'upper', arc: blocksArc, rows: [0, T.upper.rows - 1], blocks: 'l2', fg: 'upper' },
+        // Above Block 115, by the stage end (stated).
+        'beautiful-north': { kind: 'room', band: 'suite', arc: blockArc(blocks.l1, ['115']) },
+        mezz: { kind: 'tier', tier: 'band', arc: side('s', -10, 10), rows: [0, T.band.rows - 1], fg: 'premium', padded: true },
+        suites: { kind: 'room', band: 'suite', arc: side('w', 4, -16) },
+        floor: { kind: 'floor' },
+      },
+    };
+  });
+}
+
+function coopLive() {
+  // Stated: three tiers on a rectangular plan; Level 1 lower, Level 2 premium, Level 3
+  // upper, Level 4 lounges on the north and south sides; no seat more than 95 m from the
+  // stage; a Level 1 row 24 exists. Derived: end stage at the east end (+x here).
+  return arenaLayout('co-op-live', { hx: 31, hz: 22, r: 6, lowerRows: 26, bandRows: 4, upperRows: 18, roofGap: 3.8, lowerLabel: 'Level 1', bandLabel: 'Level 2', upperLabel: 'Level 3' }, ({ ring, side, T, blocksArc }) => {
+    const blocks = { l1: { tier: 'lower', ids: range(102, 114), arc: blocksArc } };
+    // Level 4 terraces at the top of the upper tier on the long (north and south) sides.
+    const terraces = [
+      { id: 'l4n', arc: side('w', 18, -18) },
+      { id: 'l4s', arc: side('e', -18, 18) },
+    ];
+    void ring;
+    return {
+      blocks, terraces,
+      sections: {
+        l1: { kind: 'tier', tier: 'lower', arc: blocksArc, rows: [0, T.lower.rows - 1], blocks: 'l1', fg: 'standard' },
+        'l2-left': { kind: 'room', band: 'suite', arc: side('w', 2, -18) },
+        'l2-right': { kind: 'room', band: 'suite', arc: side('e', -18, 2) },
+        'l2-end': { kind: 'tier', tier: 'band', arc: side('s', -12, 12), rows: [0, T.band.rows - 1], fg: 'premium', padded: true },
+        l3: { kind: 'tier', tier: 'upper', arc: side('s', -16, 16), rows: [0, T.upper.rows - 1], fg: 'upper' },
+        'l4-terrace': { kind: 'terrace', terrace: 'l4n', arc: side('w', 8, -8) },
+        floor: { kind: 'floor' },
+      },
+    };
+  });
+}
+
+function range(a, b) { const out = []; for (let k = a; k <= b; k++) out.push(String(k)); return out; }
+function blockArc(bs, ids) {
+  const w = (bs.arc[1] - bs.arc[0]) / bs.ids.length;
+  const ks = ids.map((id) => bs.ids.indexOf(id)).filter((k) => k >= 0);
+  return [bs.arc[0] + w * Math.min(...ks) + 0.5, bs.arc[0] + w * (Math.max(...ks) + 1) - 0.5];
+}
+
+/* ---------- Royal Albert Hall ---------- */
+
+// Stated: an ellipse 67 x 56 m inside, dome 41 m high, Grand Tier Level 1, Rausing Circle
+// Level 3, Gallery Level 5, boxes in the Loggia, Grand Tier and Second Tier, choir seats.
+// The plan is a rounded rectangle whose outer wall (the back of the gallery) is 67 x 56 m.
+// All tier depths and heights are modelled. Stage at +x, with the choir behind it.
+const HA_ORGAN = 0.62; // half angle of the arc behind the stage where boxes and circle stop
+export const HA_PARAPET = 0.85;
+function royalAlbertHall() {
+  const backD = 19.5;
+  const ring = new Ring(33.5 - backD, 28 - backD, 28 - backD);
+  // Design points (modelled): the stalls and circle look over the Arena to the stage.
+  const lower = designTier({ id: 'lower', label: 'Stalls', d0: 0.6, y0: 0.95, rows: 9, depth: 0.85, focalD: 10, maxRake: 32 });
+  const sb = rowY(lower, lower.rows - 1);
+  const boxes = [
+    { id: 'box-loggia', label: 'Loggia', frontD: tierBackD(lower) - 0.1, depth: 2.6, floorY: sb + 0.75, h: 2.6, pitch: 3.0 },
+  ];
+  const b2 = { id: 'box-grand', label: 'Grand Tier', frontD: boxes[0].frontD + 0.45, depth: 2.6, floorY: boxes[0].floorY + 3.0, h: 2.65, pitch: 3.2 };
+  const b3 = { id: 'box-second', label: 'Second Tier', frontD: b2.frontD + 0.45, depth: 2.5, floorY: b2.floorY + 3.0, h: 2.6, pitch: 2.8 };
+  boxes.push(b2, b3);
+  boxes.forEach((b) => { b.backD = b.frontD + b.depth; b.ceilY = b.floorY + b.h; });
+  const circle = designTier({ id: 'circle', label: 'Rausing Circle', d0: b3.frontD + 1.2, y0: b3.ceilY + 0.9, rows: 7, depth: 0.9, focalD: 16 });
+  const gallery = { d0: tierBackD(circle), backD, floorY: rowY(circle, circle.rows - 1) + 1.6, colD: backD - 0.5 };
+  gallery.colTop = gallery.floorY + 3.6;
+  const dome = { springD: backD, springY: gallery.colTop + 0.6, apexY: 41, topD: -5.2 }; // apex: stated 41 m
+  const stage = { frontX: 2.6, bow: 0.05, deck: 1.2, conductor: [3.8, 0] };
+  return {
+    id: 'royal-albert-hall', archetype: 'hall', ring, tiers: { lower, circle }, boxes, gallery, dome, stage, organ: HA_ORGAN,
+    tierOpts: { lower: {}, circle: { allow: hallAllowed } },
+    sections: {
+      arena: { kind: 'hall-floor' },
+      stalls: { kind: 'tier', tier: 'lower', arc: [ring.sOf(5, 0.15), ring.sOf(7, 0.85)], rows: [0, lower.rows - 1], fg: 'stalls' },
+      choir: { kind: 'tier', tier: 'lower', arc: [ring.sOf(1, 0.72), ring.sOf(3, 0.28)], rows: [1, lower.rows - 1], fg: 'stalls', choir: true },
+      circle: { kind: 'tier', tier: 'circle', arc: [ring.sOf(5, 0.2), ring.sOf(7, 0.8)], rows: [0, circle.rows - 1], fg: 'circle' },
+      'box-loggia': { kind: 'hall-box', box: 0 },
+      'box-grand': { kind: 'hall-box', box: 1 },
+      'box-second': { kind: 'hall-box', box: 2 },
+      gallery: { kind: 'gallery' },
+    },
+    focal: () => ({ x: stage.conductor[0] + 1.5, y: stage.deck + 1.4, z: 0, label: 'the centre of the stage', floorY: 0 }),
+    axis: () => ({ x: -1, z: 0, label: 'the stage’s centre line' }),
+    designPoint: (t) => (t.id === 'circle' ? 'the front of the stage' : 'the edge of the Arena floor'),
+    overview: { position: [-52, 70, 46], target: [2, 6, 0] },
+  };
+}
+
 export const hallAllowed = (p) => p.nx < 0 || Math.abs(Math.atan2(p.nz, p.nx)) >= HA_ORGAN;
-export const stageFrontX = (z) => HA_STAGE.frontX + HA_STAGE.bow * z * z;
-
-// Arc-length range [sA, sB] (at offset dRef) that the box tiers and circle run along.
-export function hallArc(dRef) {
+export function hallArc(L, dRef) {
   const q = HA_ORGAN / (Math.PI / 2);
-  return [HALL_RING.sOf(3, q, dRef), HALL_RING.sOf(1, 1 - q, dRef) + HALL_RING.length(dRef)];
+  return [L.ring.sOf(3, q, dRef), L.ring.sOf(1, 1 - q, dRef) + L.ring.length(dRef)];
 }
-
-// Box partitions and box centres for one box tier, as ring positions { i, f }.
-export function hallBoxes(b) {
-  const [sA, sB] = hallArc(b.frontD);
+export function hallBoxes(L, b) {
+  const [sA, sB] = hallArc(L, b.frontD);
   const n = Math.max(1, Math.round((sB - sA) / b.pitch));
   const step = (sB - sA) / n;
   const parts = []; const centres = [];
-  for (let k = 0; k <= n; k++) parts.push(HALL_RING.locate(sA + k * step, b.frontD));
-  for (let k = 0; k < n; k++) centres.push(HALL_RING.locate(sA + (k + 0.5) * step, b.frontD));
+  for (let k = 0; k <= n; k++) parts.push(L.ring.locate(sA + k * step, b.frontD));
+  for (let k = 0; k < n; k++) centres.push(L.ring.locate(sA + (k + 0.5) * step, b.frontD));
   return { parts, centres, step };
 }
-
-// Seats on the floor: arcs of rows facing the conductor, with two aisles. Rows are
-// staggered by half a seat and stand on low risers that rake gently towards the back.
-export const hallRake = (k) => Math.max(0, k - 1) * 0.085;
-export const hallRowR = (k) => 4.2 + k * 0.95;
-export function hallFloorRows() {
-  const [cx, cz] = HA_STAGE.conductor; const rows = [];
+export const stageFrontX = (L, z) => L.stage.frontX + L.stage.bow * z * z;
+export const hallRake = (k) => Math.max(0, k - 1) * 0.06;
+export const hallRowR = (k) => 3.4 + k * 0.92;
+export function hallFloorRows(L) {
+  const [cx, cz] = L.stage.conductor; const rows = [];
   for (let k = 0; k < 30; k++) {
     const r = hallRowR(k); const row = [];
-    const dphi = 0.55 / r;
-    const n = Math.floor(1.0 / dphi);
+    const dphi = 0.55 / r; const n = Math.floor(1.05 / dphi);
     for (let q = -n; q <= n; q++) {
       const phi = (q + (k % 2) * 0.5) * dphi; const a = Math.abs(phi);
-      if (a > 0.3 && a < 0.4) continue; // aisles
+      if (a > 0.3 && a < 0.38) continue;
       const x = cx - r * Math.cos(phi); const z = cz + r * Math.sin(phi);
-      if (HALL_RING.dOf(x, z) > -0.9 || x > stageFrontX(z) - 1.6) continue;
+      if (L.ring.dOf(x, z) > -0.9 || x > stageFrontX(L, z) - 1.4) continue;
       row.push({ x, y: hallRake(k), z, nx: (x - cx) / r, nz: (z - cz) / r, row: k, tier: 'floor', angle: Math.atan2(z, x), w: 0.55, phi });
     }
     if (row.length) rows.push(row);
   }
   return rows;
 }
+export function hallColumns(L) {
+  const L0 = L.ring.length(L.gallery.colD); const n = Math.round(L0 / 3.0);
+  return { n, step: L0 / n };
+}
 
-function hallFloorSeat(k, pos, f) {
-  const [cx, cz] = HA_STAGE.conductor; const r = hallRowR(k);
-  const phi = [-0.62, 0, 0.62][POS[pos] + 1];
-  const x = cx - r * Math.cos(phi); const z = cz + r * Math.sin(phi);
+/* ---------- Racecourses ---------- */
+
+// The grandstand runs along the -z side of a long ring (so the bowl kit works unchanged):
+// z = -8 - d. The winning post is at x = 0. Floors are modelled at 4.5 m spacing.
+export const STAND_RING = new Ring(1400, 8, 1);
+export const standAt = (x) => ({ i: 4, f: (STAND_RING.ax - x) / (2 * STAND_RING.ax) });
+const standPoint = (x, d) => { const { i, f } = standAt(x); return STAND_RING.point(i, f, d); };
+const FURLONG = 201.168;
+
+function racecourseLayout(o) {
+  const floors = o.floors.map((f, k) => ({
+    ...f, k, floorY: f.floorY, frontD: f.frontD, glassD: f.frontD + (f.balcony ?? 2.6), backD: f.frontD + (f.balcony ?? 2.6) + 10, ceilY: f.floorY + 3.6,
+  }));
+  const terrace = designTier({ id: 'terrace', label: 'Terrace', d0: 0.4, y0: 0.6, rows: 10, depth: 0.85, focalD: o.railZ + 8 + 1, minRise: 0.2 });
+  const top = floors[floors.length - 1];
+  const roof = { y: top.ceilY + 1.6, frontD: -0.6, backD: top.backD + 1 };
+  const trackW = o.trackW;
+  const railZ = o.railZ; const farRailZ = railZ + trackW;
+  const post = { x: 0, railZ, farRailZ };
   return {
-    position: [x, hallRake(k) + SEATED_EYE, z], target: aimAt(x, z, f), normal: [(x - cx) / r, 0, (z - cz) / r],
-    foreground: 'stalls', rowIndex: k, tierId: 'floor', snapTier: 'floor', eye: SEATED_EYE,
+    archetype: 'racecourse', ring: STAND_RING, standX: o.standX, floors, terrace, roof, railZ, farRailZ, trackW, post,
+    dir: o.dir, loop: o.loop, straight: o.straight, elevation: o.elevation, hills: o.hills, fences: o.fences || [], furlongs: o.furlongs,
+    parade: o.parade, screen: o.screen, village: o.village, sections: o.sections, lawns: o.lawns, venue: o.venue,
+    focal: () => ({ x: 0, y: o.elevation(0, (railZ + farRailZ) / 2) + 1.6, z: (railZ + farRailZ) / 2, label: 'the winning line, mid-track', floorY: o.elevation(0, (railZ + farRailZ) / 2) }),
+    axis: () => ({ x: 0, z: 1, label: 'the winning line', fold: true }),
+    designPoint: () => 'the near rail',
+    overview: o.overview,
   };
 }
 
-const HALL = {
-  id: 'hall',
-  ring: HALL_RING,
-  tiers: { lower: HA_LOWER, circle: HA_CIRCLE },
-  boxes: HA_BOXES, gallery: HA_GALLERY, dome: HA_DOME, stage: HA_STAGE, organ: HA_ORGAN,
-  focal: hallFocal,
-  areas: {
-    'private-box': {
-      seat(mode, row, pos) {
-        const f = hallFocal(); const b = HA_BOXES[0];
-        const { centres, step } = hallBoxes(b);
-        let k = 0; let best = Infinity;
-        centres.forEach((c, n) => { const p = HALL_RING.point(c.i, c.f, b.frontD); const dd = (p.x + 3) ** 2 + (p.z + 60) ** 2; if (dd < best) { best = dd; k = n; } });
-        // Left or right takes you to the neighbouring box.
-        if (POS[pos]) {
-          const c0 = HALL_RING.point(centres[k].i, centres[k].f, b.frontD);
-          const c1 = HALL_RING.point(centres[k + 1].i, centres[k + 1].f, b.frontD);
-          const rx = -(f.z - c0.z); const rz = f.x - c0.x; // the viewer's right
-          const sign = Math.sign((c1.x - c0.x) * rx + (c1.z - c0.z) * rz) || 1;
-          k = Math.max(0, Math.min(centres.length - 1, k + sign * POS[pos]));
-        }
-        const r = ROWS[row];
-        const d = b.frontD + [0.42, 1.4, 2.5][r];
-        const c = centres[k];
-        const p = HALL_RING.point(c.i, c.f, d);
-        // The second row sits between the two front chairs, on a raised chair.
-        const off = r === 1 ? 0.4 : 0;
-        const y = b.floorY + [SEATED_EYE + 0.04, SEATED_EYE + 0.24, STANDING_EYE][r];
-        return {
-          position: [p.x + p.nz * off, y, p.z - p.nx * off], target: aimAt(p.x, p.z, f), normal: [p.nx, 0, p.nz],
-          foreground: 'hall-box', boxRow: r, tierId: 'box1', eye: SEATED_EYE,
-          parapetDist: d - b.frontD, parapetY: b.floorY + HA_PARAPET, floorY: b.floorY, ceilY: b.ceilY,
-          boxHalf: step / 2 - 0.08, boxDepth: b.backD - b.frontD,
-        };
-      },
-    },
-    stalls: {
-      seat(mode, row, pos) {
-        const f = hallFocal(); const r = ROWS[row];
-        if (r < 2) return hallFloorSeat([2, 9][r], pos, f);
-        // Back of the stalls: the raked rows that sit under the box tier.
-        const t = HA_LOWER; const i = 11; const d = seatD(t, i);
-        let s = HALL_RING.sNear(-60, 0, d);
-        s = shiftAlong(HALL_RING, s, d, POS[pos], 5, f);
-        return bowlSeat(HALL_RING, t, i, s, d, { focal: f, foreground: 'stalls' });
-      },
-    },
-    circle: {
-      seat(mode, row, pos) {
-        const f = hallFocal(); const t = HA_CIRCLE; const i = [0, 4, 8][ROWS[row]];
-        const d = seatD(t, i);
-        let s = HALL_RING.sNear(-60, -6, d);
-        s = shiftAlong(HALL_RING, s, d, POS[pos], 6, f);
-        return bowlSeat(HALL_RING, t, i, s, d, { focal: f, foreground: 'circle', extra: { railDist: d - t.d0 } });
-      },
-    },
-    gallery: {
-      seat(mode, row, pos) {
-        const f = hallFocal(); const g = HA_GALLERY; const r = ROWS[row];
-        // Second row looks over the rail just clears the stage; the back wall row honestly does not.
-        const d = g.d0 + [0.55, 0.95, 1.9][r];
-        // Stand on a line midway between two columns, so none is in your face.
-        const { step } = hallColumns(); const dc = g.colD;
-        let s = HALL_RING.sNear(-60, -24, dc);
-        s = shiftAlong(HALL_RING, s, dc, POS[pos], 6, f);
-        s = Math.round(s / step) * step;
-        const { i: ci, f: cf } = HALL_RING.locate(s, dc);
-        const p = HALL_RING.point(ci, cf, d);
-        return {
-          position: [p.x, g.floorY + STANDING_EYE, p.z], target: aimAt(p.x, p.z, f), normal: [p.nx, 0, p.nz],
-          foreground: 'gallery', rowIndex: r, tierId: 'gallery', eye: STANDING_EYE, clear: 0.6, clearAhead: d - g.d0 + 0.2,
-        };
-      },
-    },
-  },
-};
-
-/* ---------- Racecourse (an illustrative grandstand and home straight) ---------- */
-
-// The grandstand is built along the straight -z side of a long, thin Ring, so the bowl
-// kit (sweeps, tiers, seat fields) works unchanged: z = -8 - d along that side.
-const RC_STAND = new Ring(400, 8, 1);
-// The track: a long loop whose -z straight is the home straight in front of the stand.
-// Near (stands side) rail at d = 0, which is z = 10; far rail at d = -26, z = 36.
-const RC_TRACK = new Ring(600, 260, 220);
-const RC = {
-  standX: [-140, 90],
-  terrace: { id: 'terrace', d0: 0.4, rows: 10, depth: 0.9, y0: 1.0, rise: 0.36, curve: 0 },
-  premierX: [-40, 28],
-  rest: { floorY: 4.6, glassD: 10.6, backD: 18, ceilY: 9.0 },
-  box: { floorY: 9.6, frontD: 7.4, glassD: 10.6, backD: 16.2, ceilY: 13.0, pitch: 5 },
-  top: { id: 'top', d0: 8.6, rows: 8, depth: 0.85, y0: 13.8, rise: 0.45, curve: 0 },
-  roof: { y: 21, frontD: -1.0, backD: 17.5 },
-  track: { cx: 60, cz: 270, width: 26 },
-  postX: 0, railZ: 10, farRailZ: 36,
-  fences: [-125, -262], // birch fences on the straight (jumps courses only)
-  screen: { x: 24, z: 96, w: 16, h: 9 },
-  parade: { x: 118, z: -6, rx: 14, rz: 9 },
-};
-// Ring position on the grandstand side for plan x.
-export const standAt = (x) => ({ i: 4, f: (RC_STAND.ax - x) / (2 * RC_STAND.ax) });
-const standPoint = (x, d) => { const { i, f } = standAt(x); return RC_STAND.point(i, f, d); };
-const raceFocal = () => ({ x: 0, y: 1.2, z: 24 });
-const raceTarget = (x) => [x + 10, 1.0, 34];
-// Facing the track (+z), the viewer's left is +x.
-const raceShift = (pos, m) => -POS[pos] * m;
-
-const RACECOURSE = {
-  id: 'racecourse',
-  ring: RC_STAND,
-  trackRing: RC_TRACK,
-  ...RC,
-  focal: raceFocal,
-  areas: {
-    'private-box': {
-      seat(mode, row, pos) {
-        const b = RC.box; const r = ROWS[row];
-        const k0 = Math.round((-18 - RC.standX[0]) / b.pitch - 0.5);
-        const k = k0 + -POS[pos];
-        const x = RC.standX[0] + b.pitch * (k + 0.5);
-        // Front: standing at the balcony rail (where box guests watch the race).
-        const d = [8.3, 12.0, 14.4][r];
-        const p = standPoint(x, d);
-        const y = b.floorY + [STANDING_EYE, SEATED_EYE + 0.04, STANDING_EYE][r];
-        return {
-          position: [p.x, y, p.z], target: raceTarget(x), normal: [0, 0, -1],
-          foreground: r === 0 ? 'race-balcony' : 'box', boxRow: r, tierId: 'box', eye: SEATED_EYE,
-          railDist: d - (b.frontD + 0.05), railY: b.floorY + 1.05,
-          glassDist: d - b.glassD, floorY: b.floorY, ceilY: b.ceilY, boxHalfW: b.pitch / 2 - 0.06,
-        };
-      },
-    },
-    restaurant: {
-      seat(mode, row, pos) {
-        const R0 = RC.rest; const r = ROWS[row];
-        const x = -55 + raceShift(pos, 7);
-        const d = [11.5, 13.6, 15.8][r];
-        const p = standPoint(x, d);
-        return {
-          position: [p.x, R0.floorY + SEATED_EYE + 0.04, p.z], target: raceTarget(x), normal: [0, 0, -1],
-          foreground: 'restaurant', boxRow: r, tierId: 'restaurant', eye: SEATED_EYE,
-          glassDist: d - R0.glassD, floorY: R0.floorY, ceilY: R0.ceilY,
-        };
-      },
-    },
-    'premier-enclosure': {
-      seat(mode, row, pos) {
-        const t = RC.terrace; const i = [1, 4, 8][ROWS[row]];
-        const x = 8 + raceShift(pos, 7); const d = seatD(t, i);
-        const p = standPoint(x, d);
-        return {
-          position: [p.x, rowY(t, i) + SEATED_EYE, p.z], target: raceTarget(x), normal: [0, 0, -1],
-          foreground: 'premium', rowIndex: i, tierId: 'terrace', snapTier: 'terrace', eye: SEATED_EYE,
-        };
-      },
-    },
-    lawn: {
-      seat(mode, row, pos) {
-        const r = ROWS[row];
-        const x = -28 + raceShift(pos, 8); const z = [8.5, 5.2, 1.6][r];
-        return {
-          position: [x, STANDING_EYE, z], target: [x + 10, r === 0 ? -2.2 : 0.4, 34], normal: [0, 0, -1],
-          foreground: 'lawn', rowIndex: r, tierId: 'lawn', eye: STANDING_EYE, railDist: RC.railZ - z, clear: 0.95, clearAhead: RC.railZ - z + 0.5,
-        };
-      },
-    },
-  },
-};
-
-export const LAYOUTS = { stadium: STADIUM, arena: ARENA, hall: HALL, racecourse: RACECOURSE };
-
-export const hasLayout = (archetype) => !!LAYOUTS[archetype];
-
-// The one function everything uses to place the camera.
-// Returns { position:[x,y,z], target:[x,y,z], normal, foreground, ... } or null.
-export function seatSpec(archetype, mode, areaId, row = 'middle', pos = 'centre') {
-  const L = LAYOUTS[archetype];
-  const a = L?.areas?.[areaId];
-  if (!a) return null;
-  return a.seat(mode, ROWS[row] != null ? row : 'middle', POS[pos] != null ? pos : 'centre');
+function ascot() {
+  // Stated: 480 m grandstand facing north over the course, winning post towards its west
+  // end (derived), right-handed round course of about 1.75 miles with a 2.5 furlong run-in,
+  // a straight mile, and a 73 ft climb from Swinley Bottom to the post (the highest point).
+  // Here the runners pass the stand travelling +x (east to west), so west is +x.
+  const railZ = 12; const trackW = 30;
+  const runIn = 2.5 * FURLONG; // stated
+  // Round course: a rounded triangle on the near (stands side) rail. Its apex distance is
+  // solved so the course is 1.75 miles round at mid-track (stated length, shape modelled).
+  const target = 1.75 * 1609.344;
+  // Vertices: east corner, west corner, north apex (Swinley Bottom). Solve the apex.
+  let lo = 300; let hi = 2000; let loop = null;
+  for (let k = 0; k < 40; k++) {
+    const mid = (lo + hi) / 2;
+    loop = makeAscotLoop(mid, railZ, runIn);
+    if (loop.length(-trackW / 2) > target) hi = mid; else lo = mid;
+  }
+  const swinley = loop.corners[2].v[1];
+  const elevation = (x, z) => -22.25 * smooth01((z - railZ - 40) / Math.max(200, swinley - railZ - 40)); // stated 73 ft = 22.25 m
+  const floors = [
+    { id: 'f1', label: '1st Floor', floorY: 5.0, frontD: 6.4 },
+    { id: 'f2', label: 'Level 2', floorY: 9.5, frontD: 7.0 },
+    { id: 'f3', label: 'Level 3', floorY: 14.0, frontD: 7.6 },
+    { id: 'f4', label: 'Level 4', floorY: 18.5, frontD: 8.2 },
+    { id: 'f5', label: 'Level 5', floorY: 23.0, frontD: 8.8 },
+    { id: 'f6', label: 'Level 6', floorY: 27.5, frontD: 9.4 },
+  ];
+  const standX = [-420, 60]; // stated 480 m long; post 60 m in from the west end (modelled)
+  const bal = (floor, x0, x1, style, extra = {}) => ({ kind: 'rc-room', floor, x: [x0, x1], style, ...extra });
+  const sections = {
+    'pr-rest': bal(1, 34, 58, 'restaurant'),
+    'windsor-forest': bal(1, 10, 33, 'restaurant'),
+    vista: bal(1, -12, 9, 'terrace'),
+    panoramic: bal(5, -46, -4, 'restaurant', { inside: true }),
+    trackside: { kind: 'rc-lawn', x: [10, 40], z: [-6, -2.5], seated: true, label: 'Concourse level' },
+    on5: bal(4, -110, -66, 'restaurant', { inside: true }),
+    furlong: bal(0, -205, -160, 'restaurant'),
+    gallery: bal(0, -150, -112, 'restaurant'),
+    'lawn-club': bal(0, -270, -222, 'restaurant'),
+    deck: bal(0, -418, -380, 'restaurant', { inside: true }),
+    'boxes-2': bal(1, -330, -60, 'box'),
+    'boxes-3': bal(2, -330, -10, 'box'),
+    'boxes-4': bal(3, -330, -70, 'box'),
+    'boxes-5': bal(4, -330, -115, 'box'),
+    'boxes-6': bal(5, -330, -50, 'box'),
+    kevii: bal(3, -66, 20, 'terrace'),
+    'qa-lawn': { kind: 'rc-lawn', x: [-260, -70], z: [-7, railZ - 0.8] },
+    'wp-lawn': { kind: 'rc-lawn', x: [-12, 58], z: [-7, railZ - 0.8] },
+    'windsor-lawn': { kind: 'rc-lawn', x: [-500, -440], z: [-4, railZ - 0.8] },
+    'village-rest': { kind: 'rc-infield', at: [-190, 92], face: [-190, -8], seated: true, marquee: true },
+    'village-gazebo': { kind: 'rc-infield', at: [-120, railZ + trackW + 6], face: [-60, railZ], seated: false },
+  };
+  const furlongs = [];
+  for (let k = 1; k <= 8; k++) furlongs.push({ x: -k * FURLONG, label: `${k}f` });
+  return racecourseLayout({
+    venue: 'ascot', dir: 1, railZ, trackW, loop, floors, standX, sections, elevation,
+    straight: { x0: -8 * FURLONG, x1: 0 }, // the straight mile ends at the post (stated straight mile)
+    furlongs, fences: [],
+    parade: { x: 40, z: -66, rx: 26, rz: 16 }, // modelled: behind the west end of the stand
+    screen: { x: -120, z: 110, w: 24, h: 13 },
+    village: { x: -200, z: 120, w: 220, d: 90 },
+    lawns: [[-420, 60]],
+    hills: 'ascot',
+    overview: { position: [-380, 230, 360], target: [-150, 6, 30] },
+  });
 }
 
-/* ---------- Plain-words geometry for descriptions ---------- */
+function makeAscotLoop(apexZ, railZ, runIn) {
+  // East corner radius 160 m; its tangent point on the straight is placed 2.5 furlongs
+  // before the post, so the run-in is exact. West corner just past the stand.
+  const r0 = 160; const r1 = 180; const r2 = 200;
+  const xW = 360; const xApex = -260;
+  // Work out the east vertex so the corner's tangent point lands at x = -runIn.
+  let xE = -runIn - 200;
+  for (let k = 0; k < 6; k++) {
+    const a = norm([xE - xApex, railZ - apexZ]); // incoming edge apex -> east vertex
+    const turn = Math.acos(clamp(a[0] * 1 + a[1] * 0, -1, 1));
+    const t = r0 * Math.tan(turn / 2);
+    xE = -runIn - t;
+  }
+  // Vertex order: anticlockwise in plan (x, z): east, west, apex.
+  return new Loop([[xE, railZ], [xW, railZ], [xApex, apexZ]], [r0, r2, r1]);
+}
+
+function cheltenham() {
+  // Stated: left-handed (runners pass the stand travelling -x here), uphill finish,
+  // natural amphitheatre below Cleeve Hill, Best Mate Enclosure directly opposite the main
+  // grandstand beside the finish line. Course length, run-in and stand length are not
+  // published: all modelled.
+  const railZ = 12; const trackW = 26;
+  const loop = new Loop([[-420, railZ], [760, railZ], [760, 560], [-420, 560]], [210, 210, 210, 210]);
+  // Uphill finish (stated): the straight climbs towards the post. Level at the stand, then
+  // falling away up the straight; the gradient is modelled.
+  const elevation = (x, z) => {
+    const nearStraight = 1 - smooth01((z - railZ - trackW - 30) / 200);
+    return -5 * smooth01((x - 150) / 450) * nearStraight;
+  };
+  const floors = [
+    { id: 'f1', label: 'First floor', floorY: 5.0, frontD: 6.4 },
+    { id: 'f2', label: 'Second floor', floorY: 9.5, frontD: 7.0 },
+    { id: 'f3', label: 'Third floor', floorY: 14.0, frontD: 7.6 },
+    { id: 'f4', label: 'Fourth level', floorY: 18.5, frontD: 8.2 },
+    { id: 'f5', label: 'Fifth level', floorY: 23.0, frontD: 8.8 },
+  ];
+  const standX = [-130, 230];
+  const bal = (floor, x0, x1, style, extra = {}) => ({ kind: 'rc-room', floor, x: [x0, x1], style, ...extra });
+  return racecourseLayout({
+    venue: 'cheltenham', dir: -1, railZ, trackW, loop, floors, standX, elevation,
+    sections: {
+      panoramic: bal(4, -22, 22, 'restaurant', { inside: true }),
+      'chez-roux': bal(2, 24, 62, 'restaurant'),
+      'boxes-3': bal(2, 64, 200, 'box'),
+      'boxes-2': bal(1, -12, 150, 'box'),
+      'boxes-1': bal(0, 40, 220, 'box'),
+      'four-eighty': bal(3, 50, 110, 'restaurant', { inside: true }),
+      'final-fence-rest': { kind: 'rc-infield', at: [262, -14], face: [200, railZ + trackW / 2], seated: true, marquee: true, stands: true },
+      'club-lawn': { kind: 'rc-lawn', x: [-40, 40], z: [-7, railZ - 0.8] },
+      'tatts-lawn': { kind: 'rc-lawn', x: [60, 225], z: [-7, railZ - 0.8] },
+      'best-mate': { kind: 'rc-lawn', x: [-26, 26], z: [railZ + trackW + 1.2, railZ + trackW + 14], far: true },
+    },
+    furlongs: [], fences: [220, 470], // final two fences on the straight (positions modelled)
+    straight: null,
+    parade: { x: -60, z: -70, rx: 24, rz: 15 },
+    screen: { x: 60, z: railZ + trackW + 70, w: 22, h: 12 },
+    village: null, lawns: [[-130, 230]], hills: 'cleeve',
+    overview: { position: [-160, 200, 330], target: [40, 6, 30] },
+  });
+}
+
+function smooth01(x) { const t = clamp(x, 0, 1); return t * t * (3 - 2 * t); }
+
+/* ---------- Registry ---------- */
+
+const MAKERS = {
+  'tottenham-hotspur-stadium': tottenham,
+  'the-arena-london': theArenaLondon,
+  'ao-arena': aoArena,
+  'co-op-live': coopLive,
+  'royal-albert-hall': royalAlbertHall,
+  'ascot-racecourse': ascot,
+  'cheltenham-racecourse': cheltenham,
+};
+const cache = {};
+export function layoutFor(venueId) {
+  if (!MAKERS[venueId]) return null;
+  if (cache[venueId]) return cache[venueId];
+  const L = MAKERS[venueId]();
+  L.venueId = venueId;
+  L.runs = runsFor(L, venueId);
+  return (cache[venueId] = L);
+}
+export const hasLayout = (venueId) => !!MAKERS[venueId] || VENUES.some((v) => v.archetype === venueId);
+
+/* ---------- Seat picker data ---------- */
+
+// What the picker shows for an area: its places (stand, side), the blocks for the chosen
+// place (only where the venue publishes block numbers), and the row choice.
+export function seatChoices(venueId, mode, areaId, placeId) {
+  const L = layoutFor(venueId); const area = areaById(venueId, areaId, { mode });
+  if (!L || !area) return null;
+  const places = (area.places || []).filter((p) => { const s = L.sections[p.section]; return s && (!s.modes || s.modes.includes(mode)); });
+  const place = places.find((p) => p.id === placeId) || places[0];
+  const sec = place ? L.sections[place.section] : null;
+  if (!sec) return { places, place: null, blocks: [], rows: { kind: 'none', n: 1 } };
+  let rows;
+  if (sec.kind === 'tier') {
+    const n = sec.rows[1] - sec.rows[0] + 1;
+    rows = { kind: 'numbered', n, first: sec.rows[0] };
+  } else if (sec.kind === 'room') {
+    rows = { kind: 'spots', options: [['front', 'Front seat'], ['middle', 'Second row'], ['back', 'Inside the suite']] };
+  } else if (sec.kind === 'hall-box') {
+    rows = { kind: 'spots', options: [['front', 'At the parapet'], ['middle', 'Second row'], ['back', 'Back of the box']] };
+  } else if (sec.kind === 'rc-room') {
+    rows = { kind: 'spots', options: sec.style === 'box' ? [['front', 'On the balcony'], ['middle', 'At the table'], ['back', 'Back of the box']]
+      : sec.style === 'terrace' ? [['front', 'At the rail'], ['middle', 'Terrace table'], ['back', 'By the glass']]
+        : sec.inside ? [['front', 'Window table'], ['middle', 'Second row'], ['back', 'Back of the room']]
+          : [['front', 'On the balcony'], ['middle', 'Window table'], ['back', 'Back of the room']] };
+  } else if (sec.kind === 'floor') {
+    rows = { kind: 'spots', options: mode === 'boxing' ? [['front', 'Front row'], ['middle', 'Third row'], ['back', 'Sixth row']] : [['front', 'Near the stage'], ['middle', 'Mid floor'], ['back', 'Back of the floor']] };
+  } else if (sec.kind === 'hall-floor') {
+    rows = { kind: 'spots', options: [['front', 'Front of the Arena'], ['middle', 'Mid Arena'], ['back', 'Back of the Arena']] };
+  } else if (sec.kind === 'gallery') {
+    rows = { kind: 'spots', options: [['front', 'At the rail'], ['middle', 'Second row'], ['back', 'Back wall']] };
+  } else if (sec.kind === 'rc-lawn') {
+    rows = { kind: 'spots', options: sec.seated ? [['front', 'Front table'], ['middle', 'Middle'], ['back', 'Back']] : [['front', 'At the rail'], ['middle', 'On the lawn'], ['back', 'Back of the lawn']] };
+  } else if (sec.kind === 'terrace') {
+    rows = { kind: 'spots', options: [['front', 'At the rail'], ['middle', 'Terrace seat'], ['back', 'By the lounge']] };
+  } else {
+    rows = { kind: 'spots', options: [['front', 'Front'], ['middle', 'Middle'], ['back', 'Back']] };
+  }
+  const bs = sec.blocks && L.blocks?.[sec.blocks];
+  const blocks = bs ? (place.blocks || bs.ids).filter((id) => bs.ids.includes(id)) : [];
+  return { places, place, section: sec, blocks, rows, posAlong: sec.kind !== 'rc-infield' };
+}
+
+/* ---------- Seat specs ---------- */
+
+// The one function everything uses to place the camera.
+// seat: { place, block, row, pos }. Returns { position, target, normal, foreground, ... }.
+export function seatSpec(venueId, mode, areaId, seat = {}) {
+  const L = layoutFor(venueId);
+  const ch = seatChoices(venueId, mode, areaId, seat.place);
+  if (!L || !ch || !ch.section) return null;
+  const sec = ch.section;
+  const block = ch.blocks.length ? (ch.blocks.includes(String(seat.block)) ? String(seat.block) : ch.blocks[Math.floor((ch.blocks.length - 1) / 2)]) : null;
+  const poi = L.focal(mode);
+  let spec = null;
+  const u = posFrac(seat.pos);
+  const spot = ROW_KEYS.includes(seat.row) ? seat.row : (Number(seat.row) >= 1 ? (Number(seat.row) <= 1 ? 'front' : 'middle') : 'middle');
+  const r = ROW_KEYS.indexOf(spot);
+  switch (sec.kind) {
+    case 'tier': {
+      const t = L.tiers[sec.tier]; const n = sec.rows[1] - sec.rows[0] + 1;
+      const i = sec.rows[0] + rowIndex(seat.row, n);
+      const [a, b] = sectionArc(L, sec, block);
+      spec = tierSeatAt(L, t, i, a + (b - a) * u, { foreground: sec.fg === 'standard' ? (t.id === 'upper' || t.id === 'l5' ? 'upper' : 'front') : (sec.fg || 'front'), padded: !!sec.padded });
+      if (sec.stool) { spec.position[1] += 0.35; spec.eye += 0.35; spec.snapTier = null; spec.foreground = 'front'; }
+      break;
+    }
+    case 'room': spec = roomSeat(L, sec, r, u); break;
+    case 'terrace': spec = terraceSeat(L, sec, r, u); break;
+    case 'floor': spec = L.archetype === 'stadium' ? stadiumFloorSeat(L, mode, r, u) : arenaFloorSeat(L, mode, r, u); break;
+    case 'hall-floor': spec = hallFloorSeat(L, r, u); break;
+    case 'hall-box': spec = hallBoxSeat(L, sec, r, u); break;
+    case 'gallery': spec = gallerySeat(L, r, u); break;
+    case 'rc-room': spec = rcRoomSeat(L, sec, r, u); break;
+    case 'rc-lawn': spec = rcLawnSeat(L, sec, r, u); break;
+    case 'rc-infield': spec = rcInfieldSeat(L, sec, r); break;
+    default: return null;
+  }
+  if (!spec) return null;
+  spec.target = spec.target || aimAt(spec.position, poi);
+  spec.poi = poi; spec.venueId = venueId; spec.mode = mode; spec.block = block;
+  spec.rowLabel = rowWords(sec, spec, ch);
+  return spec;
+}
+
+function rowWords(sec, spec, ch) {
+  if (sec.kind === 'tier') {
+    const k = spec.rowIndex - sec.rows[0] + 1; const n = ch.rows.n;
+    return `Row ${k} of ${n}`;
+  }
+  return '';
+}
+
+function roomSeat(L, sec, r, u) {
+  const B = L.bands[sec.band]; const t = L.tiers[B.tier]; const ring = L.ring;
+  const [a, b] = sec.arc; const s = a + (b - a) * u;
+  const { i: si, f } = ring.locate(s, 0);
+  if (r < 2) {
+    const i = B.seatRows[r];
+    const spec = tierSeatAt(L, t, i, s, { foreground: 'balcony', padded: true });
+    spec.railDist = seatD(t, i) - (t.d0 + 0.05); spec.railY = rowY(t, 0) + 0.9; spec.boxRow = r;
+    if (r === 1) { spec.foreground = 'premium'; }
+    return spec;
+  }
+  const d = B.glassD + 1.8; const p = ring.point(si, f, d);
+  return {
+    position: [p.x, B.floorY + 1.22, p.z], normal: [p.nx, 0, p.nz], foreground: 'box', boxRow: 2, tierId: 'box', eye: DESIGN.eye,
+    glassDist: d - B.glassD, floorY: B.floorY, ceilY: B.top + 0.1, boxHalfW: B.pitch / 2 - 0.08, snapTier: null,
+  };
+}
+
+function terraceSeat(L, sec, r, u) {
+  const ring = L.ring; const t = L.tiers.upper;
+  const [a, b] = sec.arc; const s = a + (b - a) * u;
+  const { i: si, f } = ring.locate(s, 0);
+  const base = rowY(t, t.rows - 1) + 0.5; const d0 = tierBackD(t) + 0.3;
+  const d = d0 + [0.5, 1.4, 3.2][r];
+  const p = ring.point(si, f, d);
+  const eye = r === 2 ? DESIGN.standEye : DESIGN.eye;
+  return { position: [p.x, base + eye, p.z], normal: [p.nx, 0, p.nz], foreground: r === 0 ? 'balcony' : 'premium', tierId: 'terrace', eye, railDist: d - d0, railY: base + 1.0 };
+}
+
+function stadiumFloorSeat(L, mode, r, u) {
+  const st = L.stage; const x = st.frontX - [6, 30, 58][r]; const z = (u - 0.5) * 2 * (L.pitch.hz - 6);
+  return { position: [x, DESIGN.standEye + 0.05, z], normal: [-1, 0, 0], foreground: 'floor', rowIndex: r, tierId: 'floor', eye: DESIGN.standEye, standing: true };
+}
+
+function arenaFloorSeat(L, mode, r, u) {
+  const p = (u - 0.5) * 2;
+  if (mode === 'boxing') {
+    const z = -(L.ring3.apron + 2.2 + [0, 2, 5][r] * 1.0);
+    return { position: [p * 3.6, 0.25 + DESIGN.eye - 0.1, z], normal: [0, 0, -1], foreground: 'ringside', rowIndex: r, tierId: 'floor', eye: DESIGN.eye };
+  }
+  const x = L.stage.frontX - [5, 17, 32][r];
+  return { position: [Math.max(-L.floor.hx + 3, x), DESIGN.standEye + 0.05, p * (L.floor.hz - 5)], normal: [-1, 0, 0], foreground: 'floor', rowIndex: r, tierId: 'floor', eye: DESIGN.standEye, standing: true };
+}
+
+function hallFloorSeat(L, r, u) {
+  const [cx, cz] = L.stage.conductor; const k = [1, 6, 11][r]; const rr = hallRowR(k);
+  const phi = (u - 0.5) * 1.3;
+  const x = cx - rr * Math.cos(phi); const z = cz + rr * Math.sin(phi);
+  return { position: [x, hallRake(k) + DESIGN.eye, z], normal: [(x - cx) / rr, 0, (z - cz) / rr], foreground: 'stalls', rowIndex: k, tierId: 'floor', snapTier: 'floor', eye: DESIGN.eye };
+}
+
+function hallBoxSeat(L, sec, r, u) {
+  const b = L.boxes[sec.box]; const ring = L.ring;
+  const { centres, step } = hallBoxes(L, b);
+  const k = clamp(Math.round(u * (centres.length - 1)), 0, centres.length - 1);
+  const d = b.frontD + [0.42, 1.35, 2.15][r];
+  const c = centres[k];
+  const p = ring.point(c.i, c.f, d);
+  const off = r === 1 ? 0.4 : 0;
+  const y = b.floorY + [DESIGN.eye + 0.04, DESIGN.eye + 0.24, DESIGN.standEye][r];
+  return {
+    position: [p.x + p.nz * off, y, p.z - p.nx * off], normal: [p.nx, 0, p.nz],
+    foreground: 'hall-box', boxRow: r, tierId: b.id, eye: DESIGN.eye, boxIndex: k, boxCount: centres.length,
+    parapetDist: d - b.frontD, parapetY: b.floorY + HA_PARAPET, floorY: b.floorY, ceilY: b.ceilY, boxHalf: step / 2 - 0.08, boxDepth: b.backD - b.frontD,
+  };
+}
+
+function gallerySeat(L, r, u) {
+  const g = L.gallery; const ring = L.ring;
+  const d = g.d0 + [0.55, 1.0, Math.max(1.4, g.colD - g.d0 - 0.4)][r];
+  const { step } = hallColumns(L);
+  const [a, b] = [ring.sOf(5, 0.1, g.colD), ring.sOf(7, 0.9, g.colD)];
+  let s = a + (b - a) * u; s = Math.round(s / step) * step;
+  const { i, f } = ring.locate(s, g.colD); const p = ring.point(i, f, d);
+  return { position: [p.x, g.floorY + DESIGN.standEye, p.z], normal: [p.nx, 0, p.nz], foreground: 'gallery', rowIndex: r, tierId: 'gallery', eye: DESIGN.standEye, clear: 0.6, clearAhead: d - g.d0 + 0.2, standing: true };
+}
+
+function rcRoomSeat(L, sec, r, u) {
+  const F = L.floors[sec.floor];
+  const x = sec.x[0] + (sec.x[1] - sec.x[0]) * u;
+  let d; let y; let fg;
+  if (sec.inside) { d = F.glassD + [0.9, 2.6, 5.6][r]; y = F.floorY + DESIGN.eye + 0.04; fg = 'restaurant'; }
+  else if (sec.style === 'terrace') { d = [F.frontD + 0.5, F.frontD + 1.6, F.glassD - 0.3][r]; y = F.floorY + (r === 0 ? DESIGN.standEye : DESIGN.eye + 0.04); fg = 'race-balcony'; }
+  else { d = [F.frontD + 0.85, F.glassD + 1.2, F.glassD + 4.6][r]; y = F.floorY + (r === 0 ? DESIGN.standEye : r === 1 ? DESIGN.eye + 0.04 : DESIGN.standEye); fg = r === 0 ? 'race-balcony' : (sec.style === 'box' ? 'box' : 'restaurant'); }
+  const p = standPoint(x, d);
+  return {
+    position: [p.x, y, p.z], target: raceTarget(L, p.x, p.z), normal: [0, 0, -1],
+    foreground: fg, boxRow: r, tierId: sec.style === 'box' ? 'box' : 'restaurant', eye: DESIGN.eye,
+    railDist: d - (F.frontD + 0.05), railY: F.floorY + 1.05, glassDist: d - F.glassD, floorY: F.floorY, ceilY: F.ceilY,
+    boxHalfW: sec.style === 'box' ? 2.45 : 6, standing: y - F.floorY > 1.4,
+  };
+}
+
+function rcLawnSeat(L, sec, r, u) {
+  const x = sec.x[0] + (sec.x[1] - sec.x[0]) * u;
+  const [z0, z1] = sec.z;
+  if (sec.far) {
+    const z = [z0 + 0.6, (z0 + z1) / 2, z1 - 1][r]; const y = L.elevation(x, z);
+    return { position: [x, y + DESIGN.standEye, z], target: raceTarget(L, x, z), normal: [0, 0, 1], foreground: 'lawn', rowIndex: r, tierId: 'lawn', eye: DESIGN.standEye, railDist: z - L.farRailZ, clear: 0.95, clearAhead: z - L.farRailZ + 0.5, standing: true, far: true };
+  }
+  const z = [z1 - 0.6, (z0 + z1) / 2, z0 + 1.2][r]; const y = L.elevation(x, z);
+  const eye = sec.seated ? DESIGN.eye : DESIGN.standEye;
+  return { position: [x, y + eye, z], target: raceTarget(L, x, z), normal: [0, 0, -1], foreground: sec.seated ? 'restaurant-open' : 'lawn', rowIndex: r, tierId: 'lawn', eye, railDist: L.railZ - z, clear: 0.95, clearAhead: L.railZ - z + 0.5, standing: !sec.seated };
+}
+
+// Racecourse aim: the winning line (mid-track at the post), but never more than 60 degrees
+// off straight across the track, so a seat far up the straight still faces the course.
+function raceTarget(L, x, z) {
+  const P = L.focal(); const dz = Math.abs(P.z - z) || 1;
+  const lim = Math.tan(rad(60)) * dz;
+  const tx = x + clamp(P.x - x, -lim, lim);
+  return [tx, L.elevation(tx, P.z) + 1.6, P.z];
+}
+
+function rcInfieldSeat(L, sec, r) {
+  const [x, z] = sec.at; const [fx, fz] = sec.face;
+  const back = [0, 3, 6][r]; const dx = fx - x; const dz = fz - z; const l = Math.hypot(dx, dz) || 1;
+  const px = x - (dx / l) * back; const pz = z - (dz / l) * back;
+  const y = L.elevation(px, pz) + (sec.marquee ? 0.5 : 0);
+  const eye = sec.seated ? DESIGN.eye : DESIGN.standEye;
+  return { position: [px, y + eye, pz], target: [fx, L.elevation(fx, fz) + 2.5, fz], normal: [-dx / l, 0, -dz / l], foreground: sec.seated ? 'restaurant-open' : 'lawn', rowIndex: r, tierId: 'infield', eye, standing: !sec.seated, clear: 1.2 };
+}
+
+/* ---------- Your seat in numbers ---------- */
+
+// All figures come from the modelled geometry. C-value: for a tiered seat, the clearance
+// of the sightline over the head of the row in front, measured to the tier's design point.
+export function seatNumbers(spec) {
+  if (!spec?.poi) return null;
+  const L = layoutFor(spec.venueId);
+  const [x, y, z] = spec.position; const P = spec.poi;
+  const dx = P.x - x; const dz = P.z - z; const dy = y - P.y;
+  const horiz = Math.hypot(dx, dz);
+  const distance = Math.hypot(horiz, dy);
+  const eyeHeight = y - (P.floorY ?? 0);
+  const down = Math.atan2(y - P.y, horiz) * 180 / Math.PI;
+  let off = null; const ax = L.axis(spec.mode);
+  if (ax.square) {
+    const a = Math.abs(Math.atan2(z - P.z, x - P.x)) % (Math.PI / 2);
+    off = Math.min(a, Math.PI / 2 - a) * 180 / Math.PI;
+  } else {
+    const vx = x - P.x; const vz = z - P.z; const lv = Math.hypot(vx, vz) || 1;
+    let a = Math.acos(clamp((vx * ax.x + vz * ax.z) / lv, -1, 1)) * 180 / Math.PI;
+    if (ax.fold) a = Math.min(a, 180 - a);
+    off = a;
+  }
+  // Sports: "round from" is how far round from the halfway (or 50-yard) line you are.
+  let c = null; let cNote = '';
+  if (spec.tier && spec.tier.ys) {
+    // A mode can move the design point (NFL: the sideline of a field 1.6 m lower).
+    const over = L.sightTo?.(spec.tier, spec.mode);
+    const tier = over ? { ...spec.tier, ...over } : spec.tier;
+    if (spec.rowIndex > 0) { c = cValue(tier, spec.rowIndex); cNote = `over the row in front, to ${L.designPoint(spec.tier, spec.mode)}`; }
+    else cNote = 'front row: no row in front of you';
+  } else if (spec.standing) cNote = 'standing: depends on the people in front';
+  else cNote = 'box, balcony or table: no row in front';
+  const rake = spec.tier && spec.tier.ys && spec.rowIndex > 0 ? rakeDeg(spec.tier, spec.rowIndex) : null;
+  return { distance, eyeHeight, down, off, offLabel: ax.label, c, cNote, rake, poiLabel: P.label, floorWord: P.floorWord || null };
+}
+
+/* ---------- Plain words ---------- */
 
 export function describeSeat(spec) {
   if (!spec) return '';
-  const [x, y, z] = spec.position; const [tx, ty, tz] = spec.target;
-  const dist = Math.hypot(tx - x, tz - z);
-  const height = y - ty;
-  const near = dist < 18 ? 'very close to' : dist < 40 ? 'a short distance from' : dist < 70 ? 'a moderate distance from' : 'a long way from';
-  const high = height < 3 ? 'at almost the same level as' : height < 10 ? 'a little above' : height < 22 ? 'well above' : 'high above';
-  return `${near} the action and ${high} it`;
+  const n = seatNumbers(spec);
+  if (!n) return '';
+  const near = n.distance < 25 ? 'very close to' : n.distance < 50 ? 'a short distance from' : n.distance < 90 ? 'a moderate distance from' : 'a long way from';
+  const high = n.eyeHeight < 3 ? 'at almost the same level as' : n.eyeHeight < 10 ? 'a little above' : n.eyeHeight < 22 ? 'well above' : 'high above';
+  return `${near} ${n.poiLabel} (about ${Math.round(n.distance)} metres, modelled) and ${high} it`;
 }
 
 /* ---------- Mini-map (SVG strings) ---------- */
 
 export function ringPath(ring, d, step = 2) {
-  const L = ring.length(d);
-  const pts = [];
+  const L = ring.length(d); const pts = [];
   for (let s = 0; s < L; s += step) { const p = ring.at(s, d); pts.push(`${p.x.toFixed(1)},${p.z.toFixed(1)}`); }
   return `M${pts.join('L')}Z`;
 }
 
-function ringBand(ring, d0, d1, s0, s1, step = 1.5) {
-  // A band of the ring between arc fractions s0..s1 (0..1 of the length at offset d0).
-  const L0 = ring.length(d0); const L1 = ring.length(d1);
+// A band between offsets d0 and d1 over the arc [sA, sB] (arc lengths at d = 0).
+function bandPath(ring, d0, d1, sA, sB, step = 1.5) {
   const a = []; const b = [];
-  const n = Math.max(2, Math.ceil(((s1 - s0) * L1) / step));
+  const n = Math.max(2, Math.ceil(Math.abs(sB - sA) / step));
   for (let k = 0; k <= n; k++) {
-    const u = s0 + (s1 - s0) * (k / n);
-    const p0 = ring.at(u * L0, d0); const p1 = ring.at(u * L1, d1);
-    a.push(`${p0.x.toFixed(1)},${p0.z.toFixed(1)}`);
-    b.unshift(`${p1.x.toFixed(1)},${p1.z.toFixed(1)}`);
+    const { i, f } = ring.locate(sA + (sB - sA) * (k / n), 0);
+    const p0 = ring.point(i, f, d0); const p1 = ring.point(i, f, d1);
+    a.push(`${p0.x.toFixed(1)},${p0.z.toFixed(1)}`); b.unshift(`${p1.x.toFixed(1)},${p1.z.toFixed(1)}`);
   }
   return `M${a.join('L')}L${b.join('L')}Z`;
 }
+const rect = (x0, x1, z0, z1) => `M${x0.toFixed(1)},${z0.toFixed(1)}H${x1.toFixed(1)}V${z1.toFixed(1)}H${x0.toFixed(1)}Z`;
 
-// Zone shapes (for clicking) per area, as SVG path strings in world plan coordinates.
-function zoneFor(L, archetype, mode, areaId) {
-  const spec = seatSpec(archetype, mode, areaId, 'middle', 'centre');
-  if (!spec) return '';
-  const [x, , z] = spec.position;
-  if (spec.tierId === 'floor') {
-    if (mode === 'boxing') return `M${-7},${-L.ring3.apron - 1.2}L7,${-L.ring3.apron - 1.2}L7,${-L.ring3.apron - 7.5}L-7,${-L.ring3.apron - 7.5}Z`;
-    return `M-8,-11L21,-11L21,11L-8,11Z`;
-  }
+function zoneOf(L, mode, sec, block) {
+  if (!sec) return '';
   const ring = L.ring;
-  const tier = spec.tierId === 'upper' ? L.tiers.upper : spec.tierId === 'lower' ? L.tiers.lower : null;
-  const d0 = tier ? tier.d0 : (L.box || L.suite).d0;
-  const d1 = tier ? tierBackD(tier) : (L.box || L.suite).backD;
-  const dm = (d0 + d1) / 2;
-  const Lm = ring.length(dm);
-  const s = ring.sNear(x, z, dm) / Lm;
-  const half = (spec.tierId === 'box' || spec.tierId === 'suite' ? 14 : 17) / Lm;
-  return ringBand(ring, d0, d1, s - half, s + half);
+  if (sec.kind === 'tier') {
+    const t = L.tiers[sec.tier]; const [a, b] = sectionArc(L, sec, block);
+    return bandPath(ring, rowD(t, sec.rows[0]), rowD(t, sec.rows[1] + 1), a, b);
+  }
+  if (sec.kind === 'room') { const B = L.bands[sec.band]; const t = L.tiers[B.tier]; return bandPath(ring, rowD(t, B.seatRows[0]), B.backD, sec.arc[0], sec.arc[1]); }
+  if (sec.kind === 'terrace') { const t = L.tiers.upper; return bandPath(ring, tierBackD(t), tierBackD(t) + 4, sec.arc[0], sec.arc[1]); }
+  if (sec.kind === 'floor') {
+    if (L.archetype === 'stadium') return rect(-L.pitch.hx + 4, L.stage.frontX - 2, -L.pitch.hz + 2, L.pitch.hz - 2);
+    if (mode === 'boxing') { const a = L.ring3.apron; return rect(-a - 6, a + 6, -a - 7, -a - 1); }
+    return rect(-L.floor.hx + 3, L.stage.frontX - 2, -L.floor.hz + 2, L.floor.hz - 2);
+  }
+  if (sec.kind === 'hall-floor') return rect(-ring.hx + 1, L.stage.frontX - 1, -ring.hz + 1, ring.hz - 1);
+  if (sec.kind === 'hall-box') { const b = L.boxes[sec.box]; const [sA, sB] = hallArc(L, 0); return bandPath(ring, b.frontD, b.backD, sA, sB); }
+  if (sec.kind === 'gallery') return bandPath(ring, L.gallery.d0, L.gallery.backD, ring.sOf(5, 0.1), ring.sOf(7, 0.9));
+  if (sec.kind === 'rc-room') { const F = L.floors[sec.floor]; return rect(sec.x[0], sec.x[1], -8 - F.backD, -8 - F.frontD); }
+  if (sec.kind === 'rc-lawn') return rect(sec.x[0], sec.x[1], sec.z[0], sec.z[1]);
+  if (sec.kind === 'rc-infield') { const [x, z] = sec.at; return rect(x - 8, x + 8, z - 6, z + 6); }
+  return '';
 }
 
-// Returns { viewBox, base (svg markup), zones: { areaId: pathD }, seats: { areaId: [x,z] } }.
-export function plan(archetype, mode) {
-  const L = LAYOUTS[archetype];
-  if (!L) return null;
-  if (archetype === 'hall') return hallPlan(mode);
-  if (archetype === 'racecourse') return racePlan(mode);
+// The plan outline (an SVG path in world metres) of a section, for the seat map.
+export const sectionZone = (L, mode, sec, block) => zoneOf(L, mode, sec, block);
+export { bandPath };
+
+// Returns { viewBox, base (svg markup), zones: { areaId: d }, focal: [x, z], mark }.
+// seats(areaId) gives the plan position of an area's default seat.
+export function plan(venueId, mode, areas = [], choice = {}) {
+  const L = layoutFor(venueId); if (!L) return null;
+  const parts = []; let vb;
   const ring = L.ring;
-  const outer = archetype === 'stadium' ? tierBackD(L.tiers.upper) + 2 : tierBackD(L.tiers.upper) + 1.5;
-  const W = ring.hx + outer + 4; const H = ring.hz + outer + 4;
-  const parts = [];
-  parts.push(`<path class="mm-shell" d="${ringPath(ring, outer)}"/>`);
-  parts.push(`<path class="mm-upper" d="${ringPath(ring, tierBackD(L.tiers.upper))}"/>`);
-  parts.push(`<path class="mm-mid" d="${ringPath(ring, L.tiers.upper.d0)}"/>`);
-  parts.push(`<path class="mm-lower" d="${ringPath(ring, tierBackD(L.tiers.lower))}"/>`);
-  parts.push(`<path class="mm-inner" d="${ringPath(ring, 0)}"/>`);
-  if (archetype === 'stadium') {
+  if (L.archetype === 'stadium') {
+    const outer = Math.max(...L.stands.map((s) => s.backD));
+    vb = [-(ring.hx + outer + 3), -(ring.hz + outer + 3), 2 * (ring.hx + outer + 3), 2 * (ring.hz + outer + 3)];
+    L.stands.forEach((st) => parts.push(`<path class="mm-shell" d="${bandPath(ring, 0, st.backD, st.arc[0], st.arc[1], 3)}"/>`));
+    const multi = L.stands[0];
+    ['l1', 'l2', 'l4'].forEach((id, k) => parts.push(`<path class="${k === 0 ? 'mm-lower' : 'mm-mid'}" d="${bandPath(ring, L.tiers[id].d0, tierBackD(L.tiers[id]), multi.arc[0], multi.arc[1], 3)}"/>`));
+    parts.push(`<path class="mm-upper" d="${bandPath(ring, L.tiers.l5.d0, tierBackD(L.tiers.l5), multi.arc[0], multi.arc[1], 3)}"/>`);
+    parts.push(`<path class="mm-lower" d="${bandPath(ring, L.tiers.s1.d0, tierBackD(L.tiers.s1), L.stands[1].arc[0], L.stands[1].arc[1], 3)}"/>`);
     const { hx, hz } = L.pitch;
     if (mode === 'concert') {
       parts.push(`<rect class="mm-floor" x="${-hx}" y="${-hz}" width="${2 * hx}" height="${2 * hz}" rx="1"/>`);
-      const st = L.stage;
-      parts.push(`<rect class="mm-stage" x="${st.frontX}" y="${-st.hz}" width="${st.backX - st.frontX}" height="${2 * st.hz}" rx="1"/>`);
+      parts.push(`<rect class="mm-stage" x="${L.stage.frontX}" y="${-L.stage.hz}" width="${L.stage.backX - L.stage.frontX}" height="${2 * L.stage.hz}" rx="1"/>`);
+    } else if (mode === 'nfl') {
+      const N = L.nfl; const ez = N.hx - N.endZone;
+      parts.push(`<rect class="mm-pitch" x="${(-N.hx).toFixed(2)}" y="${(-N.hz).toFixed(2)}" width="${(2 * N.hx).toFixed(2)}" height="${(2 * N.hz).toFixed(2)}" rx="0.3"/>`);
+      let yl = '';
+      for (let k = -10; k <= 10; k += 2) yl += `M${(k * 5 * N.yd).toFixed(2)},${(-N.hz).toFixed(2)}V${N.hz.toFixed(2)}`;
+      parts.push(`<path class="mm-line" d="M${(-ez).toFixed(2)},${(-N.hz).toFixed(2)}V${N.hz.toFixed(2)}M${ez.toFixed(2)},${(-N.hz).toFixed(2)}V${N.hz.toFixed(2)}${yl}"/>`);
     } else {
       parts.push(`<rect class="mm-pitch" x="${-hx}" y="${-hz}" width="${2 * hx}" height="${2 * hz}" rx="0.5"/>`);
       parts.push(`<path class="mm-line" d="M0,${-hz}V${hz}M${-hx},-20.16h16.5v40.32h-16.5M${hx},-20.16h-16.5v40.32h16.5"/>`);
-      parts.push(`<circle class="mm-line" cx="0" cy="0" r="9.15"/>`);
+      parts.push('<circle class="mm-line" cx="0" cy="0" r="9.15"/>');
     }
-  } else if (archetype === 'arena') {
+    // Stand names (stated compass names; orientation of the pitch itself is modelled).
+    const lab = (x, z, t) => `<text class="mm-label" x="${x}" y="${z}" text-anchor="middle">${t}</text>`;
+    parts.push(lab(0, -(ring.hz + 26), 'WEST'), lab(0, ring.hz + 30, 'EAST'), lab(ring.hx + 26, 2, 'NORTH'), lab(-(ring.hx + 33), 2, 'SOUTH'));
+  } else if (L.archetype === 'arena') {
+    const outer = tierBackD(L.tiers.upper) + 2;
+    vb = [-(ring.hx + outer + 2), -(ring.hz + outer + 2), 2 * (ring.hx + outer + 2), 2 * (ring.hz + outer + 2)];
+    parts.push(`<path class="mm-shell" d="${ringPath(ring, outer)}"/>`);
+    parts.push(`<path class="mm-upper" d="${ringPath(ring, tierBackD(L.tiers.upper))}"/>`);
+    parts.push(`<path class="mm-mid" d="${ringPath(ring, L.tiers.upper.d0)}"/>`);
+    parts.push(`<path class="mm-lower" d="${ringPath(ring, tierBackD(L.tiers.lower))}"/>`);
+    parts.push(`<path class="mm-inner" d="${ringPath(ring, 0)}"/>`);
     const { hx, hz } = L.floor;
-    parts.push(`<rect class="mm-floor" x="${-hx}" y="${-hz}" width="${2 * hx}" height="${2 * hz}" rx="4"/>`);
-    if (mode === 'boxing') {
-      const r = L.ring3.half;
-      parts.push(`<rect class="mm-stage" x="${-r}" y="${-r}" width="${2 * r}" height="${2 * r}"/>`);
-    } else {
-      const st = L.stage;
-      parts.push(`<rect class="mm-stage" x="${st.frontX}" y="${-st.hz}" width="${st.backX - st.frontX}" height="${2 * st.hz}" rx="1"/>`);
-    }
+    parts.push(`<rect class="mm-floor" x="${-hx}" y="${-hz}" width="${2 * hx}" height="${2 * hz}" rx="3"/>`);
+    if (mode === 'boxing') { const h = L.ring3.half; parts.push(`<rect class="mm-stage" x="${-h}" y="${-h}" width="${2 * h}" height="${2 * h}"/>`); }
+    else parts.push(`<rect class="mm-stage" x="${L.stage.frontX}" y="${-L.stage.hz}" width="${L.stage.backX - L.stage.frontX}" height="${2 * L.stage.hz}" rx="1"/>`);
+    // Published block numbers, at their modelled places.
+    Object.values(L.blocks || {}).forEach((bs) => {
+      const t = L.tiers[bs.tier]; const w = (bs.arc[1] - bs.arc[0]) / bs.ids.length;
+      bs.ids.forEach((id, k) => {
+        if (bs.ids.length > 14 && k % 2) return;
+        const { i, f } = ring.locate(bs.arc[0] + w * (k + 0.5), 0); const p = ring.point(i, f, (t.d0 + tierBackD(t)) / 2);
+        parts.push(`<text class="mm-block" x="${p.x.toFixed(1)}" y="${(p.z + 1.4).toFixed(1)}" text-anchor="middle">${id}</text>`);
+      });
+    });
+  } else if (L.archetype === 'hall') {
+    const outer = L.gallery.backD + 1.2;
+    vb = [-(ring.hx + outer + 1), -(ring.hz + outer + 1), 2 * (ring.hx + outer + 1), 2 * (ring.hz + outer + 1)];
+    parts.push(`<path class="mm-shell" d="${ringPath(ring, outer, 1)}"/>`);
+    parts.push(`<path class="mm-upper" d="${ringPath(ring, L.gallery.backD, 1)}"/>`);
+    parts.push(`<path class="mm-mid" d="${ringPath(ring, L.gallery.d0, 1)}"/>`);
+    parts.push(`<path class="mm-lower" d="${ringPath(ring, L.boxes[2].backD, 1)}"/>`);
+    parts.push(`<path class="mm-mid" d="${ringPath(ring, tierBackD(L.tiers.lower), 1)}"/>`);
+    parts.push(`<path class="mm-floor" d="${ringPath(ring, -0.3, 1)}"/>`);
+    const z0 = -ring.hz + 0.6; const pts = [];
+    for (let k = 0; k <= 16; k++) { const z = z0 + (2 * -z0) * (k / 16); pts.push(`${stageFrontX(L, z).toFixed(1)},${z.toFixed(1)}`); }
+    parts.push(`<path class="mm-stage" d="M${pts.join('L')}L${ring.hx - 0.4},${-z0}L${ring.hx - 0.4},${z0}Z"/>`);
+  } else {
+    const [sx0, sx1] = L.standX;
+    const x0 = Math.min(sx0, ...Object.values(L.sections).filter((s) => s.x).map((s) => s.x[0])) - 20; const x1 = sx1 + 40;
+    const zTop = -8 - L.roof.backD - 14; const zBot = L.village ? L.village.z + L.village.d / 2 + 10 : L.farRailZ + 40;
+    vb = [x0, zTop, x1 - x0, zBot - zTop];
+    parts.push(`<rect class="mm-turf" x="${vb[0]}" y="${vb[1]}" width="${vb[2]}" height="${vb[3]}"/>`);
+    parts.push(`<rect class="mm-track" x="${vb[0]}" y="${L.railZ}" width="${vb[2]}" height="${L.trackW}"/>`);
+    parts.push(`<path class="mm-rail" d="M${vb[0]},${L.railZ}H${vb[0] + vb[2]}M${vb[0]},${L.farRailZ}H${vb[0] + vb[2]}"/>`);
+    parts.push(`<path class="mm-post" d="M0,${L.railZ - 3}V${L.farRailZ + 3}"/>`);
+    parts.push(`<rect class="mm-upper" x="${sx0}" y="${-8 - L.roof.backD}" width="${sx1 - sx0}" height="${L.roof.backD}"/>`);
+    parts.push(`<rect class="mm-lower" x="${sx0}" y="${-8 - tierBackD(L.terrace)}" width="${sx1 - sx0}" height="${tierBackD(L.terrace)}"/>`);
+    if (L.village) parts.push(`<rect class="mm-parade" x="${L.village.x - L.village.w / 2}" y="${L.village.z - L.village.d / 2}" width="${L.village.w}" height="${L.village.d}" rx="6"/>`);
+    const pr = L.parade; parts.push(`<ellipse class="mm-parade" cx="${pr.x}" cy="${pr.z}" rx="${pr.rx}" ry="${pr.rz}"/>`);
+    const arrowY = L.farRailZ + 9; const ax0 = L.dir > 0 ? -60 : 60;
+    parts.push(`<path class="mm-dir" d="M${ax0},${arrowY}h${L.dir * 40}m${-L.dir * 8},-5l${L.dir * 8},5l${-L.dir * 8},5"/>`);
+    parts.push(`<text class="mm-label" x="4" y="${L.farRailZ + 20}">POST</text>`);
   }
-  const zones = {}; const seats = {};
-  Object.keys(L.areas).forEach((id) => {
-    zones[id] = zoneFor(L, archetype, mode, id);
-    const sp = seatSpec(archetype, mode, id);
-    seats[id] = [sp.position[0], sp.position[2]];
-  });
-  const focal = L.focal(mode);
-  return { viewBox: `${-W} ${-H} ${2 * W} ${2 * H}`, base: parts.join(''), zones, seats, focal: [focal.x, focal.z], mark: (2 * W) / 220 };
-}
-
-function seatsOf(archetype, L, mode) {
-  const seats = {};
-  Object.keys(L.areas).forEach((id) => { const sp = seatSpec(archetype, mode, id); seats[id] = [sp.position[0], sp.position[2]]; });
-  return seats;
-}
-
-function polyPath(pts) { return `M${pts.map(([x, z]) => `${x.toFixed(1)},${z.toFixed(1)}`).join('L')}Z`; }
-
-function hallPlan(mode) {
-  const L = HALL; const ring = L.ring;
-  const outer = HA_GALLERY.backD + 1.4;
-  const W = ring.hx + outer + 2; const H = ring.hz + outer + 2;
-  const parts = [];
-  parts.push(`<path class="mm-shell" d="${ringPath(ring, outer, 1)}"/>`);
-  parts.push(`<path class="mm-upper" d="${ringPath(ring, HA_GALLERY.backD, 1)}"/>`);
-  parts.push(`<path class="mm-mid" d="${ringPath(ring, HA_GALLERY.d0, 1)}"/>`);
-  parts.push(`<path class="mm-lower" d="${ringPath(ring, HA_BOXES[0].backD, 1)}"/>`);
-  parts.push(`<path class="mm-mid" d="${ringPath(ring, tierBackD(HA_LOWER), 1)}"/>`);
-  parts.push(`<path class="mm-inner" d="${ringPath(ring, 0, 1)}"/>`);
-  // Organ arc behind the stage.
-  const q = HA_ORGAN / (Math.PI / 2);
-  const sA = ring.sOf(1, 1 - q, 11); const sB = ring.sOf(3, q, 11);
-  const Lo = ring.length(11);
-  parts.push(`<path class="mm-organ" d="${ringBand(ring, 10.9, 12.2, sA / Lo, sB / Lo, 0.8)}"/>`);
-  // Floor and stage.
-  const floorPts = []; const stagePts = [];
-  const L0 = ring.length(-0.4);
-  for (let s = 0; s < L0; s += 0.6) {
-    const p = ring.at(s, -0.4);
-    (p.x < stageFrontX(p.z) ? floorPts : stagePts).push([p.x, p.z]);
-  }
-  parts.push(`<path class="mm-floor" d="${ringPath(ring, -0.4, 1)}"/>`);
-  // Stage points run in ring order from the +z side round to the -z side; close along the curved front.
-  const z0 = stagePts[stagePts.length - 1][1]; const z1 = stagePts[0][1];
-  const front = []; for (let k = 1; k < 12; k++) { const z = z0 + (z1 - z0) * (k / 12); front.push([stageFrontX(z), z]); }
-  parts.push(`<path class="mm-stage" d="${polyPath([...stagePts, ...front])}"/>`);
-  // Zones.
   const zones = {};
-  const band = (d0, d1, sx, sz, half) => {
-    const dm = (d0 + d1) / 2; const Lm = ring.length(dm); const s = ring.sNear(sx, sz, dm) / Lm;
-    return ringBand(ring, d0, d1, s - half / Lm, s + half / Lm, 0.8);
-  };
-  const sp = (id) => seatSpec('hall', mode, id);
-  const bx = sp('private-box').position; zones['private-box'] = band(HA_BOXES[0].frontD, HA_BOXES[0].backD, bx[0], bx[2], 5);
-  const cp = sp('circle').position; zones.circle = band(HA_CIRCLE.d0, tierBackD(HA_CIRCLE), cp[0], cp[2], 9);
-  const gp = sp('gallery').position; zones.gallery = band(HA_GALLERY.d0, HA_GALLERY.backD, gp[0], gp[2], 9);
-  zones.stalls = polyPath(floorPts.filter((p) => p[0] < HA_STAGE.frontX - 1.2));
-  return { viewBox: `${-W} ${-H} ${2 * W} ${2 * H}`, base: parts.join(''), zones, seats: seatsOf('hall', HALL, mode), focal: [hallFocal().x, 0], mark: (2 * W) / 220 };
+  areas.forEach((a) => {
+    const ch = seatChoices(venueId, mode, a.id, a.id === choice.area ? choice.place : null);
+    if (!ch?.section) return;
+    zones[a.id] = zoneOf(L, mode, ch.section, a.id === choice.area ? choice.block : null);
+  });
+  const f = L.focal(mode);
+  return { viewBox: vb.map((v) => v.toFixed(1)).join(' '), base: parts.join(''), zones, focal: [f.x, f.z], mark: vb[2] / 220 };
 }
 
-function racePlan(mode) {
-  const R0 = RACECOURSE; const vb = [-125, -40, 250, 150];
-  const parts = [];
-  const [sx0, sx1] = R0.standX;
-  parts.push(`<rect class="mm-turf" x="${vb[0]}" y="${vb[1]}" width="${vb[2]}" height="${vb[3]}"/>`);
-  parts.push(`<rect class="mm-track" x="${vb[0]}" y="${R0.railZ}" width="${vb[2]}" height="${R0.farRailZ - R0.railZ}"/>`);
-  parts.push(`<path class="mm-rail" d="M${vb[0]},${R0.railZ}H${vb[0] + vb[2]}M${vb[0]},${R0.farRailZ}H${vb[0] + vb[2]}"/>`);
-  parts.push(`<path class="mm-post" d="M0,${R0.railZ - 2}V${R0.farRailZ}"/>`);
-  parts.push(`<rect class="mm-upper" x="${sx0}" y="${-8 - R0.roof.backD}" width="${sx1 - sx0}" height="${R0.roof.backD}"/>`);
-  parts.push(`<rect class="mm-lower" x="${sx0}" y="${-8 - tierBackD(R0.terrace)}" width="${sx1 - sx0}" height="${tierBackD(R0.terrace)}"/>`);
-  const scr = R0.screen;
-  parts.push(`<rect class="mm-stage" x="${scr.x - scr.w / 2}" y="${scr.z - 1}" width="${scr.w}" height="2"/>`);
-  const pr = R0.parade;
-  parts.push(`<ellipse class="mm-parade" cx="${pr.x}" cy="${pr.z}" rx="${pr.rx}" ry="${pr.rz}"/>`);
-  const rect = (x0, x1, z0, z1) => `M${x0},${z0}H${x1}V${z1}H${x0}Z`;
-  const zones = {
-    lawn: rect(-62, -2, -7.6, 9.4),
-    'premier-enclosure': rect(-6, 28, -17.4, -8.4),
-    'private-box': rect(-38, -6, -24.2, -15.4),
-    restaurant: rect(-78, -40, -26, -18.6),
+/* ---------- Plan frame and projection (Plan mode and the seat map) ---------- */
+
+// The world rectangle (metres) a plan of the venue shows: the same box as the mini-map
+// viewBox. World x runs left to right on the plan and world z top to bottom.
+export function planFrame(venueId, mode) {
+  const P = plan(venueId, mode); if (!P) return null;
+  const [x0, z0, w, h] = P.viewBox.split(' ').map(Number);
+  return { x0, z0, w, h, cx: x0 + w / 2, cz: z0 + h / 2 };
+}
+// How a frame fits a width x height box (aspect kept, centred, pad pixels all round).
+// zoom > 1 magnifies about the frame centre; (panX, panZ) moves the centre in metres.
+export function planFit(frame, width, height, { pad = 0, zoom = 1, panX = 0, panZ = 0 } = {}) {
+  const scale = Math.min((width - 2 * pad) / frame.w, (height - 2 * pad) / frame.h) * zoom;
+  return { scale, cx: frame.cx + panX, cz: frame.cz + panZ, width, height };
+}
+// World (x, z) to pixels in that box, and back. The engine's Plan camera uses the same fit,
+// so a seat map drawn with these lines up with the 3D plan underneath.
+export function worldToPlan(fit, x, z) {
+  return { px: fit.width / 2 + (x - fit.cx) * fit.scale, py: fit.height / 2 + (z - fit.cz) * fit.scale };
+}
+export function planToWorld(fit, px, py) {
+  return { x: fit.cx + (px - fit.width / 2) / fit.scale, z: fit.cz + (py - fit.height / 2) / fit.scale };
+}
+
+/* ---------- Seats of a section, generated from the tier geometry ---------- */
+
+// Every seat in the section an area, place and block point to, row by row, at 500 mm
+// centres (the FIFA minimum seat width, a design standard) along the section arc. Row i
+// sits at seatD(tier, i) out from the ring line and rowY(tier, i) up. Seat k of n in a row
+// is the same point seatSpec gives for { row: i + 1, pos: (k + 0.5) / n * 100 }, so a seat
+// map can hand a click straight to the viewer. Returns null for boxes, rooms and floors.
+export function sectionSeats(venueId, mode, areaId, placeId, block) {
+  const L = layoutFor(venueId); const ch = seatChoices(venueId, mode, areaId, placeId);
+  if (!L || !ch?.section || ch.section.kind !== 'tier') return null;
+  const sec = ch.section; const t = L.tiers[sec.tier]; const ring = L.ring;
+  const b0 = ch.blocks.length ? (ch.blocks.includes(String(block)) ? String(block) : ch.blocks[Math.floor((ch.blocks.length - 1) / 2)]) : null;
+  const [a, b] = sectionArc(L, sec, b0);
+  const rows = [];
+  for (let i = sec.rows[0]; i <= sec.rows[1]; i++) {
+    const d = seatD(t, i);
+    // Arc length at this row's offset (longer than at d = 0 round the corners).
+    let len = 0; let prev = null;
+    for (let k = 0; k <= 40; k++) { const { i: si, f } = ring.locate(a + (b - a) * (k / 40), 0); const p = ring.point(si, f, d); if (prev) len += Math.hypot(p.x - prev.x, p.z - prev.z); prev = p; }
+    const n = Math.max(1, Math.floor(len / 0.5));
+    const seats = [];
+    for (let k = 0; k < n; k++) {
+      const u = (k + 0.5) / n; const { i: si, f } = ring.locate(a + (b - a) * u, 0); const p = ring.point(si, f, d);
+      seats.push({ k, pos: Math.round(u * 1000) / 10, x: p.x, y: rowY(t, i), z: p.z, nx: p.nx, nz: p.nz });
+    }
+    rows.push({ row: i - sec.rows[0] + 1, tierRow: i, seats });
+  }
+  return { tier: t.id, block: b0, rows };
+}
+
+/* ---------- Move hotspots and measuring points ---------- */
+
+// Places a short step away from the current seat: the rows in front and behind, along the
+// row, the neighbouring blocks, and the nearest other areas. Each has the seat it leads to
+// ({ area, place, block, row, pos }), a label and the floor point under it (for the ring).
+export function moveTargets(venueId, mode, areaId, seat, areaList = []) {
+  const ch = seatChoices(venueId, mode, areaId, seat.place); const here = seatSpec(venueId, mode, areaId, seat);
+  if (!ch || !here) return [];
+  const out = [];
+  const floorOf = (sp) => [sp.position[0], sp.position[1] - (sp.eye ?? DESIGN.eye) - (sp.standing ? DESIGN.standEye - DESIGN.eye : 0), sp.position[2]];
+  const add = (id, label, s, area = areaId) => {
+    const sp = seatSpec(venueId, mode, area, s); if (!sp) return;
+    const d = Math.hypot(sp.position[0] - here.position[0], sp.position[2] - here.position[2], sp.position[1] - here.position[1]);
+    if (d < 0.6) return;
+    out.push({ id, label, seat: { area, ...s }, floor: floorOf(sp), position: sp.position, dist: d });
   };
-  return { viewBox: vb.join(' '), base: parts.join(''), zones, seats: seatsOf('racecourse', RACECOURSE, mode), focal: [0, 24], mark: vb[2] / 220 };
+  const pk = POS_KEYS.includes(seat.pos) ? POS_U[seat.pos] * 100 : Number(seat.pos);
+  const pos = Number.isFinite(pk) ? pk : 50;
+  if (ch.rows.kind === 'numbered') {
+    const n = ch.rows.n; const cur = rowIndex(seat.row, n) + 1;
+    const stepR = Math.max(2, Math.round(n / 5));
+    if (cur > 1) add('row-front', `Row ${Math.max(1, cur - stepR)}`, { ...seat, row: String(Math.max(1, cur - stepR)) });
+    if (cur < n) add('row-back', `Row ${Math.min(n, cur + stepR)}`, { ...seat, row: String(Math.min(n, cur + stepR)) });
+  } else if (ch.rows.kind === 'spots') {
+    const r = ROW_KEYS.indexOf(ROW_KEYS.includes(seat.row) ? seat.row : 'middle');
+    ch.rows.options.forEach(([k, l], j) => { if (Math.abs(j - r) === 1) add(`spot-${k}`, l, { ...seat, row: k }); });
+  }
+  if (ch.posAlong) {
+    if (pos > 12) add('left', 'Along to the left', { ...seat, pos: String(Math.max(0, Math.round(pos - 22))) });
+    if (pos < 88) add('right', 'Along to the right', { ...seat, pos: String(Math.min(100, Math.round(pos + 22))) });
+  }
+  if (ch.blocks.length > 1) {
+    const k = ch.blocks.indexOf(String(here.block));
+    [-1, 1].forEach((dk) => { const b = ch.blocks[k + dk]; if (b) add(`block-${b}`, `Block ${b}`, { ...seat, block: b, pos: '50' }); });
+  }
+  // The nearest other areas (their default seat).
+  const others = areaList.filter((a) => a.id !== areaId).map((a) => {
+    const sp = seatSpec(venueId, mode, a.id, {}); if (!sp) return null;
+    return { a, d: Math.hypot(sp.position[0] - here.position[0], sp.position[2] - here.position[2], sp.position[1] - here.position[1]) };
+  }).filter(Boolean).sort((x, y) => x.d - y.d).slice(0, 3);
+  others.forEach(({ a }) => add(`area-${a.id}`, a.label || a.id, {}, a.id));
+  return out;
+}
+
+// Named points a measurement can snap to: the action (stage, ring, pitch, field markings,
+// the winning post, rails) in world metres. Seats are added by the engine from the model.
+export function measurePoints(venueId, mode) {
+  const L = layoutFor(venueId); if (!L) return [];
+  const P = []; const add = (label, x, y, z) => P.push({ label, p: [x, y, z] });
+  const f = L.focal(mode); add(f.label.replace(/^the /, 'The '), f.x, f.y, f.z);
+  if (L.archetype === 'stadium') {
+    if (mode === 'football') {
+      const { hx, hz } = L.pitch;
+      add('The centre spot', 0, 0, 0); add('The north goal', hx, 0, 0); add('The south goal', -hx, 0, 0);
+      add('Halfway line, west touchline', 0, 0, -hz); add('Halfway line, east touchline', 0, 0, hz);
+      add('North penalty spot', hx - 11, 0, 0); add('South penalty spot', -hx + 11, 0, 0);
+      [[1, 1], [1, -1], [-1, 1], [-1, -1]].forEach(([sx, sz]) => add(`${sx > 0 ? 'North' : 'South'}-${sz > 0 ? 'east' : 'west'} corner flag`, sx * hx, 0, sz * hz));
+    } else if (mode === 'nfl') {
+      const N = L.nfl; const y = N.level; const gl = N.hx - N.endZone;
+      add('North goal line', gl, y, 0); add('South goal line', -gl, y, 0);
+      add('North goalposts', N.hx, y, 0); add('South goalposts', -N.hx, y, 0);
+      add('50-yard line, west sideline', 0, y, -N.hz); add('50-yard line, east sideline', 0, y, N.hz);
+    } else {
+      const S = L.stage; add('Stage front, centre', S.frontX, S.deck, 0); add('Stage front, left', S.frontX, S.deck, -S.hz); add('Stage front, right', S.frontX, S.deck, S.hz);
+    }
+  } else if (L.archetype === 'arena') {
+    if (mode === 'boxing') { const h = L.ring3.half; add('Centre of the ring', 0, L.ring3.deck, 0); [[1, 1], [1, -1], [-1, 1], [-1, -1]].forEach(([a, b], k) => add(`Ring corner ${k + 1}`, a * h, L.ring3.deck, b * h)); }
+    else { const S = L.stage; add('Stage front, centre', S.frontX, S.deck, 0); add('Stage front, left', S.frontX, S.deck, -S.hz); add('Stage front, right', S.frontX, S.deck, S.hz); }
+  } else if (L.archetype === 'hall') {
+    add('The conductor', L.stage.conductor[0], L.stage.deck, 0); add('Front of the stage', L.stage.frontX, L.stage.deck, 0);
+  } else if (L.archetype === 'racecourse') {
+    const yP = (x, z) => L.elevation(x, z);
+    add('Winning post, near rail', 0, yP(0, L.railZ), L.railZ); add('Winning post, far rail', 0, yP(0, L.farRailZ), L.farRailZ);
+    (L.furlongs || []).slice(0, 3).forEach((fl) => add(`${fl.label.replace('f', ' furlong')} marker`, fl.x, yP(fl.x, L.railZ), L.railZ));
+    (L.fences || []).forEach((x, k) => add(k === 0 ? 'Last fence (modelled position)' : 'Second last fence (modelled position)', x, yP(x, (L.railZ + L.farRailZ) / 2), (L.railZ + L.farRailZ) / 2));
+  }
+  return P;
+}
+
+// Default area for a venue (used when a link names none).
+export function defaultAreaFor(venueId) {
+  const v = venueById(venueId);
+  return ({ 'tottenham-hotspur-stadium': 'tunnel-club', 'the-arena-london': 'club-101', 'ao-arena': 'beautiful-north', 'co-op-live': 'gallery-suites', 'royal-albert-hall': 'grand-tier-box', 'ascot-racecourse': 'private-box', 'cheltenham-racecourse': 'cleeve-view-boxes' })[v?.id] || null;
 }

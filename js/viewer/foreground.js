@@ -1,4 +1,4 @@
-﻿// Foreground realism: the things right around YOUR seat that make a frame read as a
+// Foreground realism: the things right around YOUR seat that make a frame read as a
 // particular ticket. Built in world space around the seat (so turning your head
 // reveals them naturally) and rebuilt whenever the seat changes.
 //
@@ -8,10 +8,11 @@
 //   balcony      box balcony seats outside the glass: glass balustrade in front
 //   suite-seats  arena suite seats out front (same as balcony)
 //   premium      padded seats (handled by the seat field), nothing extra
-//   pitchside    nothing extra: boards and the pitch are already close
+//   front        nothing extra: the front of the bowl is already close
 //   upper        steep tier: the stand's own aisle handrails and the many heads below
 //   floor        standing on an arena floor: two phones held up in front of you
 //   ringside     a low padded barrier and the ring apron close by
+//   restaurant-open  a dressed table with guests, outdoors or in a marquee (no room)
 //
 // Return value: { group, update(t, still), dispose() }.
 
@@ -62,8 +63,10 @@ export function buildForeground(spec, { lowPower = false } = {}) {
   const f = frame(spec);
   const kind = spec.foreground;
 
-  if (kind === 'box' || kind === 'restaurant') {
-    const restaurant = kind === 'restaurant';
+  if (kind === 'box' || kind === 'restaurant' || kind === 'restaurant-open') {
+    // restaurant-open: a dressed table outdoors or in a marquee (no room around it).
+    const open = kind === 'restaurant-open';
+    const restaurant = kind === 'restaurant' || open;
     const floorY = spec.floorY ?? spec.position[1] - 1.2;
     const ceilY = spec.ceilY ?? floorY + 3;
     const g = spec.glassDist ?? 1.2; // distance from camera to the glass line
@@ -83,6 +86,7 @@ export function buildForeground(spec, { lowPower = false } = {}) {
     const reflMat = keep(new THREE.MeshBasicMaterial({ map: keep(glassStreaks()), transparent: true, opacity: 0.55, depthWrite: false, blending: THREE.AdditiveBlending }));
 
     // Side partitions, back wall, ceiling, floor.
+    if (!open) {
     const sideGeo = keep(new THREE.BoxGeometry(0.12, ceilY - floorY, deep + 0.4));
     if (!restaurant) [-1, 1].forEach((s) => {
       const m = at(new THREE.Mesh(sideGeo, wood), f, g - (deep + 0.4) / 2 + 0.2, s * halfW, floorY + (ceilY - floorY) / 2);
@@ -112,6 +116,7 @@ export function buildForeground(spec, { lowPower = false } = {}) {
     const paneMat = keep(new THREE.MeshPhysicalMaterial({ color: '#ffffff', roughness: 0.03, transparent: true, opacity: 0.04, envMapIntensity: 1.2, depthWrite: false, side: THREE.DoubleSide }));
     const pane = at(new THREE.Mesh(keep(new THREE.PlaneGeometry(halfW * 2, ceilY - floorY)), paneMat), f, g - 0.03, 0, floorY + (ceilY - floorY) / 2);
     group.add(pane);
+    }
 
     // Dining table between you and the glass, with its edge at the bottom of the frame.
     const tableY = floorY + 0.76;

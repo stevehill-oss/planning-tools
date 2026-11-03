@@ -15,10 +15,11 @@
 
 import { select, chips, segmented, stepper, range, moneyInput, actionBar, animateNumber, ring, group, el, icon } from '../ui.js';
 import { html, raw, fmt, clamp, BRAND } from '../core.js';
-import { EVENT_TYPES, AREAS } from '../data/venues.js';
-import { modeFor, pickVenue } from '../data/occasions.js';
+import { EVENT_TYPES } from '../data/venues.js';
+import { pickStaging, productsFor } from '../data/occasions.js';
+import { eventLinks, linkInfo, outLinkHtml } from '../data/prestige-links.js';
 
-const EVENTS = EVENT_TYPES.filter((e) => e.id !== 'golf');
+const EVENTS = EVENT_TYPES.slice();
 const eventById = (id) => EVENTS.find((e) => e.id === id) || null;
 
 const BENEFITS = [
@@ -47,12 +48,9 @@ const MAX_COST = 100000;
 const MAX_DEAL = 10000000;
 const MAX_SOFT = 10000000;
 
-const EXAMPLE = {
-  event: 'horse-racing', clients: 8, hosts: 2, cost: 450, deal: 12000, conv: 15, cycle: 6,
-  benefits: ['relationship', 'retention'], soft: { relationship: 1500, retention: 2000 },
-};
-
 const money = (n) => fmt.gbp(n);
+// Lower case for running text, but NFL and other initialisms keep their capitals.
+const lcName = (s) => (/^[A-Z0-9]{2,}\b/.test(s) ? s : String(s).toLowerCase());
 const signed = (n) => (Math.round(n) > 0 ? `+${money(n)}` : Math.round(n) < 0 ? `-${money(-n)}` : money(0));
 const people = (n, one = 'client', many = 'clients') => `${fmt.num(n)} ${n === 1 ? one : many}`;
 // Small non-zero values keep two places, so 1% of 3 clients reads "about 0.03", not "about 0".
@@ -69,9 +67,9 @@ const listJoin = (a) => (a.length <= 1 ? a.join('') : `${a.slice(0, -1).join(', 
 
 const TIPS = {
   stadium: [
-    'Bring guests in early for the pre-match dining. The easiest conversations happen before kick-off, not during play.',
+    'Bring guests in early for the dining beforehand. The easiest conversations happen before the start, not during the action.',
     'Seat hosts beside the clients they most need to talk to, rather than together at the end of the table.',
-    'Plan the exit: big crowds leave at once, so staying on in the lounge after the final whistle buys more time together.',
+    'Plan the exit: big crowds leave at once, so staying on in the lounge after the finish buys more time together.',
   ],
   racecourse: [
     'Race days are long and relaxed, with natural breaks between races. Use them for the one-to-one conversations that matter.',
@@ -223,7 +221,7 @@ export function sensitivitySvg(values, { width = 520, height = 220, selected = '
 /* ---------- Mount ---------- */
 
 export function mount(root, ctx) {
-  const fresh = () => ({ event: null, clients: 8, hosts: 1, cost: null, deal: null, conv: 10, cycle: null, benefits: [], soft: {}, scen: 'expected', example: false });
+  const fresh = () => ({ event: null, clients: 8, hosts: 1, cost: null, deal: null, conv: 10, cycle: null, benefits: [], soft: {}, scen: 'expected' });
   const st = fresh();
 
   root.innerHTML = '';
@@ -240,9 +238,8 @@ export function mount(root, ctx) {
   </header>`));
 
   const exampleBar = el(html`<div class="roi-example">
-    <button type="button" class="btn btn--ghost btn--sm" data-example>${raw(icon('sparkles'))}<span>Try example figures</span></button>
     <button type="button" class="btn btn--ghost btn--sm" data-clear hidden>${raw(icon('rotate'))}<span>Start again</span></button>
-    <p class="fine-print">Example figures are illustrative only, not prices, quotes or typical results.</p>
+    <p class="fine-print">Use your own figures. We never show prices or typical results here.</p>
   </div>`);
   inputs.append(exampleBar);
 
@@ -262,10 +259,10 @@ export function mount(root, ctx) {
 
   // 2. Money
   const g2 = group('Cost and value', '2');
-  const cost = moneyInput({ label: 'Hospitality cost per person', max: MAX_COST, placeholder: 'The price you have been quoted', onChange: (v) => { st.cost = v; st.example = false; update(); } });
+  const cost = moneyInput({ label: 'Hospitality cost per person', max: MAX_COST, placeholder: 'The price you have been quoted', onChange: (v) => { st.cost = v; update(); } });
   const costNote = el('<p class="roi-recon" aria-live="polite"></p>');
   cost.el.append(costNote);
-  const deal = moneyInput({ label: 'Average value of a won client', max: MAX_DEAL, placeholder: 'For example, first-year revenue', hint: 'Use revenue, or profit if you would rather judge the case on margin.', onChange: (v) => { st.deal = v; st.example = false; update(); } });
+  const deal = moneyInput({ label: 'Average value of a won client', max: MAX_DEAL, placeholder: 'Your figure, such as first-year revenue', hint: 'Use revenue, or profit if you would rather judge the case on margin.', onChange: (v) => { st.deal = v; update(); } });
   const conv = range({
     label: 'How many invited clients do you expect to sign?', min: CONV_MIN, max: CONV_MAX, step: 1, value: st.conv,
     format: (v) => `${v}% (${oneDp((st.clients * v) / 100)} of ${st.clients})`,
@@ -309,18 +306,15 @@ export function mount(root, ctx) {
     empty.innerHTML = html`<div class="roi-empty__inner">
       <div class="roi-empty__icon">${raw(icon('chart'))}</div>
       <h3>${err ? 'One figure needs a look' : 'Your business case builds here'}</h3>
-      <p>${err === 'cost' ? 'Enter a cost per person of at least £1 to work out a return.' : err === 'deal' ? 'Enter a deal value of at least £1 to work out how many clients need to sign.' : 'Add the cost per person and what a won client is worth. Everything else has a sensible starting point you can change.'}</p>
+      <p>${err === 'cost' ? 'Enter a cost per person of at least one pound to work out a return.' : err === 'deal' ? 'Enter a deal value of at least one pound to work out how many clients need to sign.' : 'Add the cost per person and what a won client is worth. Everything else has a sensible starting point you can change.'}</p>
       <ul class="roi-empty__list">
         <li class="${st.cost > 0 ? 'is-ok' : ''}">${raw(icon('ticket'))}<span>Hospitality cost per person</span></li>
         <li class="${st.deal > 0 ? 'is-ok' : ''}">${raw(icon('briefcase'))}<span>Average value of a won client</span></li>
       </ul>
-      <button type="button" class="btn btn--ink" data-example>${raw(icon('sparkles'))}<span>Try example figures</span></button>
-      <p class="fine-print">Example figures are illustrative, not prices, quotes or typical results.</p>
     </div>`;
   }
 
   out.innerHTML = html`
-    <p class="roi-example-note" hidden>${raw(icon('info'))}<span><strong>Example figures.</strong> Illustrative values to show how the tool works, not prices, quotes or typical results. Replace them with your own.</span></p>
     <article class="card result-card roi-verdict">
       <div class="roi-verdict__top">
         <div class="roi-ring">${raw(ring(0, 100, { size: 132, stroke: 10, caption: 'return' }))}</div>
@@ -357,6 +351,7 @@ export function mount(root, ctx) {
       </div>
       <button type="button" class="btn btn--ink" data-case>${raw(icon('arrow-right', 'icon--nudge'))}<span>Build a business case</span></button>
     </section>
+    <div class="roi-site" data-site></div>
     <section class="card roi-tips" aria-labelledby="roi-tips-title">
       <h4 id="roi-tips-title"></h4>
       <ul class="roi-tips__list" data-tips></ul>
@@ -401,7 +396,6 @@ export function mount(root, ctx) {
     cycle: st.cycle,
     scen: st.scen !== 'expected' ? st.scen : null,
     soft: st.benefits.filter((b) => st.soft[b] != null).map((b) => `${b}:${st.soft[b]}`),
-    ex: st.example ? 1 : null,
   });
 
   function applyToControls() {
@@ -418,7 +412,7 @@ export function mount(root, ctx) {
   }
 
   function fromParams(p = {}) {
-    const keys = ['event', 'clients', 'cost', 'deal', 'conv', 'benefits', 'hosts', 'cycle', 'scen', 'soft', 'ex'];
+    const keys = ['event', 'clients', 'cost', 'deal', 'conv', 'benefits', 'hosts', 'cycle', 'scen', 'soft'];
     if (!keys.some((k) => p[k] != null && p[k] !== '')) return false;
     const next = fresh();
     if (eventById(p.event)) next.event = p.event;
@@ -436,16 +430,8 @@ export function mount(root, ctx) {
       const [k, v] = pair.split(':');
       if (BEN[k] && num(v, MAX_SOFT) != null) next.soft[k] = num(v, MAX_SOFT);
     });
-    next.example = p.ex === '1';
     Object.assign(st, next);
     return true;
-  }
-
-  function loadExample() {
-    Object.assign(st, fresh(), { ...EXAMPLE, benefits: EXAMPLE.benefits.slice(), soft: { ...EXAMPLE.soft }, example: true });
-    applyToControls();
-    update();
-    ctx.toast('Example figures loaded. They are illustrative, not prices or typical results.', { tone: 'info' });
   }
 
   function clearAll() {
@@ -455,8 +441,7 @@ export function mount(root, ctx) {
   }
 
   root.addEventListener('click', (e) => {
-    if (e.target.closest('[data-example]')) loadExample();
-    else if (e.target.closest('[data-clear]')) clearAll();
+    if (e.target.closest('[data-clear]')) clearAll();
     else if (e.target.closest('[data-case]')) openCase();
   });
 
@@ -482,7 +467,7 @@ export function mount(root, ctx) {
 
   function paintResult(r) {
     const v = verdictFor(r);
-    $('.roi-example-note').hidden = !st.example;
+    paintSite();
     const card = $('.roi-verdict');
     card.dataset.tone = v.tone;
     if (lastTitle && lastTitle !== v.title && !ctx.reducedMotion()) {
@@ -494,7 +479,7 @@ export function mount(root, ctx) {
     ringFill.setAttribute('stroke-dashoffset', String(ringC * (1 - clamp(m / 3, 0, 1))));
     animateNumber(ringVal, m, { format: (n) => multiple(n) });
     $('.ring').setAttribute('aria-label', `Return of ${multiple(m)} the cost, ${r.sel.label.toLowerCase()} scenario`);
-    $('[data-v-eyebrow]').textContent = st.example ? 'Business case on example figures' : 'Your business case';
+    $('[data-v-eyebrow]').textContent = 'Your business case';
     $('[data-v-title]').textContent = v.title;
     $('[data-v-why]').textContent = v.why;
 
@@ -540,7 +525,7 @@ export function mount(root, ctx) {
 
   function paintTips() {
     const ev = eventById(st.event);
-    $('#roi-tips-title').textContent = ev ? `Hosting tips for ${ev.label.toLowerCase()}` : 'Hosting tips';
+    $('#roi-tips-title').textContent = ev ? `Hosting tips for ${lcName(ev.label)}` : 'Hosting tips';
     $('[data-tips]').innerHTML = tipsFor(st.event).map((t) => html`<li>${raw(icon('check'))}<span>${t}</span></li>`).join('');
   }
 
@@ -601,13 +586,20 @@ export function mount(root, ctx) {
 
   /* ---------- Hand-offs, brief, share, enquiry ---------- */
 
+  // Opens the viewer at a venue that really stages this event type, at its first real
+  // hospitality product. Event types with no venue model open the viewer's own picker.
   function previewHospitality() {
-    const ev = eventById(st.event);
-    const arch = ev?.archetypes?.[0];
-    if (!arch) { ctx.navigate('reality-viewer', {}); return; }
-    const venue = pickVenue(arch, 'uk');
-    const area = (AREAS[arch] || []).find((a) => a.kind === 'hospitality');
-    ctx.navigate('reality-viewer', { venue: venue?.id, area: area?.id, mode: modeFor(ev.id, arch) });
+    const s = st.event ? pickStaging(st.event, 'uk') : null;
+    if (!s) { ctx.navigate('reality-viewer', {}); return; }
+    const area = productsFor(st.event, s.venue)[0];
+    ctx.navigate('reality-viewer', { venue: s.venue, mode: s.mode, area: area?.id });
+  }
+
+  // The matching page on our website: the event type's best page, else the homepage.
+  function paintSite() {
+    const host = $('[data-site]');
+    const info = (st.event && eventLinks(st.event, { tool: 'corporate-roi' })[0]) || linkInfo('/', { tool: 'corporate-roi', outcome: 'home' });
+    host.innerHTML = info ? html`<p class="roi-site__lead">Next step: see the hospitality we offer${st.event ? ` for ${lcName(eventName())}` : ''}.</p>${raw(outLinkHtml(info, { cls: 'btn btn--gold', iconSvg: icon('external') }))}` : '';
   }
 
   function eventName() { return eventById(st.event)?.label || 'a live event'; }
@@ -616,7 +608,6 @@ export function mount(root, ctx) {
     if (!res) return [];
     const r = res;
     return [
-      st.example ? 'Example figures (illustrative, not prices or typical results)' : null,
       `Event: ${eventName()}, ${people(r.clients)}, ${people(r.hosts, 'host', 'hosts')}`,
       `Cost: ${money(r.cost)} per person, ${money(r.totalCost)} in total`,
       `Average value of a won client: ${money(r.deal)}`,
@@ -648,7 +639,7 @@ export function mount(root, ctx) {
       tool: 'corporate-roi',
       event: st.event ? eventName() : '',
       size: st.clients + st.hosts,
-      summary: `Client hospitality for ${people(st.clients)}${st.hosts ? ` and ${people(st.hosts, 'host', 'hosts')}` : ''}${st.event ? ` at ${eventName().toLowerCase()}` : ''}`,
+      summary: `Client hospitality for ${people(st.clients)}${st.hosts ? ` and ${people(st.hosts, 'host', 'hosts')}` : ''}${st.event ? ` at ${lcName(eventName())}` : ''}`,
       lines: lines(),
     });
   }
@@ -666,7 +657,6 @@ export function mount(root, ctx) {
     const L = [
       `Business case: client hospitality, ${eventName()}`,
       `Prepared ${fmt.date()}`,
-      st.example ? 'NOTE: built on example figures, which are illustrative only.' : null,
       '',
       `Recommendation: ${v.title}. ${v.why}`,
       '',
@@ -704,7 +694,7 @@ export function mount(root, ctx) {
   function nextSteps(r) {
     return [
       `Agree the budget of ${money(r.totalCost)} and a guest list of ${people(r.clients)}.`,
-      `Speak to a ${BRAND.name} specialist about dates and hospitality options${st.event ? ` for ${eventName().toLowerCase()}` : ''}.`,
+      `Speak to a ${BRAND.name} specialist about dates and hospitality options${st.event ? ` for ${lcName(eventName())}` : ''}.`,
       'Give each host named guests to look after, and agree who follows up with whom.',
       `Review the result against this case${st.cycle ? ` after about ${st.cycle} ${st.cycle === 1 ? 'month' : 'months'}` : ' at the end of your sales cycle'}.`,
     ];
@@ -719,7 +709,6 @@ export function mount(root, ctx) {
         <img src="${logoUrl}" alt="${BRAND.name}" width="600" height="146">
         <div><p>Business case</p><p>Prepared ${fmt.date()}</p></div>
       </header>
-      ${raw(st.example ? '<p class="roi-doc__example">Built on example figures, which are illustrative only. Replace them with your own before sharing.</p>' : '')}
       <h1 id="roi-doc-title" tabindex="-1">Client hospitality: ${st.event ? eventName() : 'a live event'}</h1>
       <div class="roi-doc__rec">
         <p class="roi-doc__kicker">Recommendation</p>

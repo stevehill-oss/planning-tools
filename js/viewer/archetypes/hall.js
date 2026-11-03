@@ -1,21 +1,24 @@
-// Concert hall archetype: an illustrative elliptical Victorian-style hall, not a model of
-// any real venue. Orchestra mode:
-//   floor     parquet floor with arcs of seats facing the stage (the stalls)
-//   lower     a raked tier all the way round (behind the stage it becomes choir seating)
-//   boxes     two tiers of private boxes with velvet parapets, gilded rails and pilasters
-//   circle    a raked tier above the boxes, with a velvet parapet and brass rail
-//   gallery   a standing gallery high up behind a balustrade, under a colonnade
-//   ceiling   a ribbed dome with a glazed crown and a lantern, and suspended acoustic
-//             diffusers (lifted off for the overview)
-//   stage     a curved platform, risers, an orchestra with chairs, stands and instruments,
-//             a conductor on the podium, and an organ case with ranks of pipes behind
+// Concert hall builder: the Royal Albert Hall from its layout in js/viewer/layouts.js.
+// Stated and used: an ellipse 67 x 56 m inside, a 41 m dome, the Arena, Stalls, Loggia,
+// Grand Tier and Second Tier boxes, Rausing Circle, Choir and Gallery, and acoustic
+// diffusers hung below the ceiling. Tier depths, heights, box widths and the stage are
+// modelled. Orchestra mode:
+//   floor     the Arena: arcs of seats facing the stage on a parquet floor
+//   lower     the Stalls, a raked tier all the way round; behind the stage, the Choir
+//   boxes     three tiers of boxes (Loggia, Grand Tier, Second Tier) with velvet parapets
+//   circle    the Rausing Circle above the boxes, with a velvet parapet and brass rail
+//   gallery   the standing Gallery behind a balustrade, under a colonnade
+//   ceiling   a ribbed dome with a glazed crown and the diffusers (lifted for the overview)
+//   stage     a curved platform with risers, an orchestra and a conductor, and a plain
+//             panelled screen above the Choir (the research does not describe it)
 // Module contract: see the header of stadium.js.
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { LAYOUTS, rowY, rowD, tierBackD, hallAllowed, hallArc, hallBoxes, hallFloorRows, stageFrontX, HA_PARAPET as PH, hallRake, hallRowR, hallColumns } from '../layouts.js';
+import { rowY, rowD, tierBackD, tierBuildOpts, hallArc as hallArcL, hallBoxes as hallBoxesL, hallFloorRows as hallFloorRowsL, stageFrontX as stageFrontXL, HA_PARAPET as PH, hallRake, hallRowR, hallColumns as hallColumnsL } from '../layouts.js';
 import { sweep, buildTier, stepsMesh, SeatField, instanced, yawFacing, arcSamples, endCap, bandFromRuns } from '../bowl.js';
 import { Crowd } from '../crowd.js';
+import { seatStyleFor } from '../seatplan.js';
 import * as TX from '../textures.js';
 
 const up = new THREE.Vector3(0, 1, 0);
@@ -23,7 +26,9 @@ const RED = [0.42, 0.07, 0.08];
 
 export async function build(ctx) {
   const { renderer, lowPower } = ctx;
-  const L = LAYOUTS.hall; const ring = L.ring;
+  const L = ctx.layout; const ring = L.ring;
+  const hallArc = (d) => hallArcL(L, d); const hallBoxes = (b) => hallBoxesL(L, b);
+  const hallFloorRows = () => hallFloorRowsL(L); const stageFrontX = (z) => stageFrontXL(L, z); const hallColumns = () => hallColumnsL(L);
   const root = new THREE.Group(); root.name = 'hall';
   const disposables = []; const keep = (x) => { disposables.push(x); return x; };
   const R = TX.rng(61);
@@ -80,7 +85,7 @@ export async function build(ctx) {
 
   // Risers: stepped arcs behind the strings, centred on the conductor.
   const riser = (r0, h) => {
-    const a = 1.35; const r1 = 9.6;
+    const a = 1.15; const r1 = 8.3;
     const sh = new THREE.Shape(); sh.absarc(cx, cz, r1, -a, a, false); sh.absarc(cx, cz, r0, a, -a, true);
     const g = new THREE.ExtrudeGeometry(sh, { depth: h, bevelEnabled: false, curveSegments: 28 });
     g.rotateX(Math.PI / 2); g.translate(0, ST.deck + h, 0);
@@ -91,12 +96,15 @@ export async function build(ctx) {
 
   /* ---------- Lower tier (runs all the way round; behind the stage it is choir seating) ---------- */
   const fullS = ring.samples({ straightStep: 2, cornerSteps: 34 });
-  const radials = ring.radials({ straightEvery: 6, cornerSplits: 5 });
-  const B1 = L.boxes[0]; const B2 = L.boxes[1];
+  // Aisles at the section edges of js/data/seatmaps.js, so these are the seat map's seats.
+  // Armrests as the Hall states them: none in the Stalls, fixed in the Choir and Circle.
+  const style = seatStyleFor(L.venueId, ctx.mode);
+  const arms = (s) => style(s).arms; const padded = (s) => style(s).padded;
+  const B1 = L.boxes[0]; const B2 = L.boxes[L.boxes.length - 1];
   const lower = buildTier(ring, lt, {
-    radials, seed: 4, frontBase: 0, samples: fullS, concreteColor: [1, 1, 1],
+    ...tierBuildOpts(L, 'lower'), seed: 4, frontBase: 0, samples: fullS, concreteColor: [1, 1, 1],
     backWall: B1.floorY - 0.35 - rowY(lt, lt.rows - 1),
-    padded: () => true, seatColor: () => RED,
+    padded, arms, seatColor: () => RED,
   });
   add(lower.concrete, M.tier, { cast: true });
   root.add(stepsMesh(lower.steps, M.step));
@@ -105,7 +113,7 @@ export async function build(ctx) {
 
   /* ---------- Floor seats (the stalls) ---------- */
   const floorRows = hallFloorRows();
-  floorRows.forEach((row) => row.forEach((s) => { s.padded = true; s.color = RED.map((v) => v * (0.95 + R() * 0.1)); }));
+  floorRows.forEach((row) => row.forEach((s) => { s.padded = false; s.arms = true; s.color = RED.map((v) => v * (0.95 + R() * 0.1)); }));
   const floorSlots = floorRows.flat();
   // Low risers under each raked row, cut to the row's own extent.
   const riserGeos = [];
@@ -197,8 +205,8 @@ export async function build(ctx) {
   const [cA, cB] = hallArc(ct.d0);
   const cS = arcSamples(ring, cA, cB, ct.d0, 0.7);
   const circle = buildTier(ring, ct, {
-    radials: radials.filter((r) => hallAllowed(ring.point(r.i, r.f, ct.d0))), samples: cS, allow: hallAllowed,
-    frontBase: B2.ceilY, backWall: G.floorY - rowY(ct, ct.rows - 1), padded: () => true, seatColor: () => RED, seed: 8, concreteColor: [1, 1, 1],
+    ...tierBuildOpts(L, 'circle'), samples: cS,
+    frontBase: B2.ceilY, backWall: G.floorY - rowY(ct, ct.rows - 1), padded, arms, seatColor: () => RED, seed: 8, concreteColor: [1, 1, 1],
   });
   add(circle.concrete, M.tier, { cast: true });
   root.add(stepsMesh(circle.steps, M.step));
@@ -242,41 +250,23 @@ export async function build(ctx) {
   const capG = keep(new THREE.CylinderGeometry(0.32, 0.22, 0.28, 12));
   root.add(instanced(capG, M.gold, cols, (p, P, q, sc) => { P.set(p.x, G.colTop - 0.14, p.z); q.identity(); sc.set(1, 1, 1); }));
 
-  /* ---------- Organ ---------- */
+  /* ---------- Screen above the choir ---------- */
+  // The research does not describe what stands above the choir, so this is a plain
+  // panelled timber screen with pilasters (modelled), not a portrait of anything real.
   const q0 = L.organ / (Math.PI / 2);
-  const oA = ring.sOf(1, 1 - q0, 11.5); const oB = ring.sOf(3, q0, 11.5);
-  const oS = arcSamples(ring, oA, oB, 11.5, 0.5);
+  const oD = B1.frontD + 0.6;
+  const oA = ring.sOf(1, 1 - q0, oD); const oB = ring.sOf(3, q0, oD);
+  const oS = arcSamples(ring, oA, oB, oD, 0.5);
   const osw = (prof, mat) => add(sweep(ring, prof, { samples: oS }), mat);
-  osw([[11.9, B1.floorY - 0.4], [11.9, G.floorY - 0.4]], M.wood);
-  osw([[10.8, B1.floorY - 0.35], [11.35, B1.floorY - 0.35], [11.35, 10.3], [11.95, 10.3]], M.wood);
-  osw([[11.33, 10.1], [11.33, 10.3]], M.gold);
-  osw([[11.2, 21.6], [11.9, 21.6]], M.wood);
-  osw([[11.18, 21.45], [11.18, 21.62]], M.gold);
-  osw([[11.9, G.floorY - 0.4], [G.d0, G.floorY - 0.4]], M.wood);
-  const pipes = []; const Lo = oB - oA;
-  const towers = (u) => { const a = Math.min(1, Math.abs(u)); const bump = Math.abs(Math.cos(u * Math.PI * 2.5)) ** 2; return 3.0 + 5.4 * bump * (1 - 0.3 * a) + 2.6 * (1 - a); };
-  const rank = (dd, spacing, hFn, rFn) => {
-    for (let s = oA + spacing / 2; s < oB; s += spacing) {
-      const u = ((s - oA) / Lo) * 2 - 1; const { i, f } = ring.locate(s, 11.5); const p = ring.point(i, f, dd);
-      pipes.push({ x: p.x, z: p.z, h: hFn(u), r: rFn(u) });
-    }
-  };
-  rank(11.62, 0.4, (u) => towers(u + 0.2) * 0.72 + 2.6, () => 0.11);
-  rank(11.18, 0.44, towers, (u) => 0.17 - 0.05 * Math.abs(u));
-  // Dark case towers dividing the pipe flats, each with a gilded cap.
-  const caseT = [];
-  for (let k = 0; k <= 8; k++) { const s = oA + (Lo * k) / 8; const { i, f } = ring.locate(s, 11.5); caseT.push(ring.point(i, f, 11.0)); }
-  const ctGeo = keep(new THREE.BoxGeometry(0.55, G.floorY - 10.7, 0.5)); ctGeo.translate(0, (G.floorY - 10.7) / 2, 0);
-  root.add(instanced(ctGeo, M.wood, caseT, (p, P, q, sc) => { P.set(p.x, 10.3, p.z); q.setFromAxisAngle(up, yawFacing(-p.nx, -p.nz)); sc.set(1, 1, 1); }));
-  root.add(instanced(keep(new THREE.BoxGeometry(0.7, 0.3, 0.6)), M.gold, caseT, (p, P, q, sc) => { P.set(p.x, 21.7, p.z); q.setFromAxisAngle(up, yawFacing(-p.nx, -p.nz)); sc.set(1, 1, 1); }));
-  const pipeParts = [new THREE.CylinderGeometry(1, 1, 1, 10, 1, true).translate(0, 0.62, 0), new THREE.CylinderGeometry(1, 0.22, 0.24, 10, 1, true).translate(0, 0.0, 0)];
-  const pipeGeo = keep(mergeGeometries(pipeParts)); pipeParts.forEach((g) => g.dispose());
-  // Scale: radius r, height h, the merged unit pipe spans y -0.12..1.12, so lift it a little.
-  root.add(instanced(pipeGeo, M.pipe, pipes, (p, P, q, sc) => { P.set(p.x, 10.3 + 0.12 * p.h * 0.85, p.z); q.identity(); sc.set(p.r, p.h * 0.85, p.r); }));
-  const mouths = pipes.map((p) => ({ ...p }));
-  root.add(instanced(keep(new THREE.BoxGeometry(1, 1, 1)), M.dark, mouths, (p, P, q, sc) => {
-    P.set(p.x - (p.x > 0 ? 0.0 : 0), 10.3 + 0.12 * p.h * 0.85 + 0.35, p.z); q.setFromAxisAngle(up, yawFacing(-p.x, -p.z)); sc.set(p.r * 0.9, 0.16, p.r * 2.05);
-  }));
+  osw([[oD + 0.4, B1.floorY - 0.4], [oD + 0.4, G.floorY - 0.4]], M.wood);
+  osw([[oD - 0.3, B1.floorY - 0.35], [oD + 0.4, B1.floorY - 0.35]], M.wood);
+  [B1.ceilY, B2.floorY + 1.2, B2.ceilY].forEach((y) => { osw([[oD + 0.38, y - 0.08], [oD + 0.38, y + 0.08]], M.gold); osw([[oD + 0.12, y + 0.08], [oD + 0.4, y + 0.08]], M.cream); });
+  osw([[oD + 0.4, G.floorY - 0.4], [G.d0, G.floorY - 0.4]], M.wood);
+  const caseT = []; const Lo = oB - oA;
+  for (let k = 0; k <= 12; k++) { const s = oA + (Lo * k) / 12; const { i, f } = ring.locate(s, oD); caseT.push(ring.point(i, f, oD + 0.25)); }
+  const pilH = G.floorY - B1.floorY;
+  const ctGeo = keep(new THREE.BoxGeometry(0.42, pilH, 0.3)); ctGeo.translate(0, pilH / 2, 0);
+  root.add(instanced(ctGeo, M.cream, caseT, (p, P, q, sc) => { P.set(p.x, B1.floorY - 0.4, p.z); q.setFromAxisAngle(up, yawFacing(-p.nx, -p.nz)); sc.set(1, 1, 1); }));
 
   /* ---------- Dome, crown and lantern ---------- */
   const domeS = ring.samples({ straightStep: 2, cornerSteps: 40 });
@@ -287,10 +277,11 @@ export async function build(ctx) {
   const crownMat = keep(new THREE.MeshStandardMaterial({ map: glazed, roughness: 0.4, side: THREE.DoubleSide, emissive: new THREE.Color('#ffffff'), emissiveMap: glazed, emissiveIntensity: 0.3 }));
   add(sweep(ring, prof(0, 1.05, 16), { samples: domeS, uRepeats: 64, vScale: 10 }), domeMat, { parent: ceilingGroup });
   add(sweep(ring, prof(1.05, Math.PI / 2, 8), { samples: domeS, uRepeats: 64, vScale: 4 }), crownMat, { parent: ceilingGroup });
-  add(sweep(ring, [[D.topD, D.apexY], [-12.45, D.apexY + 0.5]], { samples: domeS }), crownMat, { parent: ceilingGroup });
-  const plug = add(new THREE.PlaneGeometry(8.6, 2.2), crownMat, { parent: ceilingGroup }); plug.rotation.x = Math.PI / 2; plug.position.y = D.apexY + 0.5;
+  add(sweep(ring, [[D.topD, D.apexY], [-(ring.hz - 0.05), D.apexY + 0.5]], { samples: domeS }), crownMat, { parent: ceilingGroup });
+  const plug = add(new THREE.PlaneGeometry(2 * (ring.hx - ring.hz) + 0.6, 0.8), crownMat, { parent: ceilingGroup }); plug.rotation.x = Math.PI / 2; plug.position.y = D.apexY + 0.5;
 
-  // Suspended acoustic diffusers, scattered (never a grid) under the dome.
+  // Suspended acoustic diffusers (stated: fibreglass discs hung below the ceiling since
+  // 1969), scattered under the dome. Their number and hanging height are modelled.
   const domeY = (x, z) => {
     const d = ring.dOf(x, z);
     if (d < D.topD) return D.apexY;
@@ -298,12 +289,13 @@ export async function build(ctx) {
     return D.springY + (D.apexY - D.springY) * Math.sin(Math.acos(c));
   };
   const diff = []; let tries = 0;
-  while (diff.length < 88 && tries++ < 6000) {
-    const x = (R() * 2 - 1) * 16; const z = (R() * 2 - 1) * 13;
-    if ((x / 16.5) ** 2 + (z / 13.5) ** 2 > 1) continue;
+  const dX = ring.hx + 7; const dZ = ring.hz + 7;
+  while (diff.length < 96 && tries++ < 8000) {
+    const x = (R() * 2 - 1) * dX; const z = (R() * 2 - 1) * dZ;
+    if ((x / (dX + 0.5)) ** 2 + (z / (dZ + 0.5)) ** 2 > 1) continue;
     const rad = 0.95 + R() * 0.75;
     if (diff.some((d) => (d.x - x) ** 2 + (d.z - z) ** 2 < (d.r + rad + 0.4) ** 2)) continue;
-    diff.push({ x, z, r: rad, y: 19.4 + R() * 1.5 - Math.hypot(x / 16, z / 13) * 0.6 });
+    diff.push({ x, z, r: rad, y: D.springY + 1.2 + R() * 1.5 - Math.hypot(x / dX, z / dZ) * 0.6 });
   }
   const capParts = [new THREE.SphereGeometry(1, 20, 5, 0, Math.PI * 2, Math.PI * 0.62, Math.PI * 0.38), new THREE.CircleGeometry(0.93, 20).rotateX(-Math.PI / 2)];
   capParts[0].scale(1 / 0.93, 0.36 / 0.63, 1 / 0.93); capParts[0].translate(0, 0.36 * 0.368 / 0.63, 0);
@@ -394,7 +386,7 @@ export async function build(ctx) {
   root.add(instanced(headGeo, M.cream, drums, (c, P, q, sc) => { P.set(c.x, c.y, c.z); q.identity(); sc.set(c.s / 0.37, 1, c.s / 0.37); }));
 
   /* ---------- Lighting ---------- */
-  const spots = [[-5, 21, -8, 9, 1.6, -1.5], [-5, 21, 8, 9, 1.6, 1.5], [1, 24, 0, 11, 1.6, 0], [-2, 15, 0, 22, 15, 0]].map(([x, y, z, tx, ty, tz]) => {
+  const spots = [[-6, 21, -7, cx + 3, 1.6, -1.5], [-6, 21, 7, cx + 3, 1.6, 1.5], [0, 24, 0, cx + 4.5, 1.6, 0], [-4, 15, 0, ring.hx + 6, 12, 0]].map(([x, y, z, tx, ty, tz]) => {
     const s = new THREE.SpotLight('#ffd6a0', 0, 0, 0.4, 0.75, 0);
     s.position.set(x, y, z); s.target.position.set(tx, ty, tz);
     root.add(s, s.target);
@@ -430,7 +422,7 @@ export async function build(ctx) {
   return {
     root, crowd, seats, indoor: true,
     bounds: { center: new THREE.Vector3(0, 14, 0), radius: 46 },
-    overview: { position: new THREE.Vector3(-42, 64, 40), target: new THREE.Vector3(2, 6, 0), minDistance: 24, maxDistance: 140 },
+    overview: { position: new THREE.Vector3(...L.overview.position), target: new THREE.Vector3(...L.overview.target), minDistance: 24, maxDistance: 160 },
     // The overview lifts the dome off (a cutaway); the seat view puts it back.
     setView(v) { ceilingGroup.visible = v !== 'overview'; },
     setMood(m, info) {

@@ -34,23 +34,45 @@ page at 390 pixels wide).
 The `dev` folder holds test pages. It does no harm online, but you can leave it out.
 Everything the page needs is inside the folder (Three.js and GSAP are included in
 `vendor`). The only outside requests are Google Fonts, links to the live site and, once a
-key is added and someone opens "Real venue", Google's 3D map.
+key is added and someone opens "Real venue", Google's 3D map. If a real scan or lounge tour
+is later added to `js/data/captures.js`, opening it also loads the scan library from
+cdn.jsdelivr.net or the tour from Matterport. The shipped capture list is empty.
 
-## The five tools
+## The tools
 
 Each tool has its own address, so old links from the first prototype still work
 (for example `#corporate-roi` or `#seat-finder`).
 
 1. **Where Should I Sit?** (`#seat-finder`). Pick the event, what matters most, a budget
-   level and who is going. It recommends a seating area with the reasons, indicative scores,
-   trade-offs and a runner-up. Buttons take you to the 3D view of that seat or to the
+   level and who is going. It recommends a named hospitality product with the reasons,
+   figures from our 3D model (labelled modelled) and a runner-up. It gives no opinion scores. Buttons take you to the 3D view of that seat or to the
    value check.
-2. **Seat Reality Viewer** (`#reality-viewer`). A 3D view from the seat. Seven venues across
-   four venue types: a stadium (football or concert), an arena (concert or boxing), a concert
-   hall (orchestra) and a racecourse (race day, with a "Watch a race" button). Choose the
-   area, row and position, day, golden hour or night, and how busy it is. Overview mode
-   shows the whole venue with clickable area markers. "Compare with a standard ticket"
-   shows hospitality and a standard seat side by side. "Save this view" downloads a picture.
+2. **Seat Reality Viewer** (`#reality-viewer`). A true-scale 3D model of seven venues with
+   their real hospitality products: Tottenham Hotspur Stadium (football, NFL or concert),
+   The Arena London, AO Arena and Co-op Live (concert or boxing), the Royal Albert Hall
+   (orchestra), and Ascot and Cheltenham (race days, with a raceday picker and a "Watch a
+   race" button). A **seat map** sits beside the 3D view (on phones, "Seat map" and "3D
+   view" swap): every seat of the model, drawn by us from the same geometry as the 3D
+   seats, with blocks numbered as the venue numbers them where that is published and
+   hospitality areas tinted by product. Zoom in to single seats and pick one (mouse, touch
+   or arrow keys), or type the block, row and seat from a ticket into **Find my seat**; the
+   view flies to that exact seat. Boxes are picked by number (Ascot's box numbers are
+   published). A shared link reopens the exact seat (`block=114&row=M&seat=8`) or box
+   (`box=324`). **Show spacing** draws the seat width, seat centres, row depth, clear seatway
+   and row rise in 3D round the seat, and "Your seat" lists every figure with its label
+   (stated, measured, design standard or modelled) and a plain-words source. No venue
+   publishes its seat sizes, so the chairs are drawn to UK and FIFA design standards. A mode
+   bar under the picture works like a Matterport tour:
+   - **Seat view**: look round a full circle from your seat (drag, swipe or arrow keys).
+   - **Move**: rings on nearby rows, blocks and areas; select one to glide there.
+   - **Dollhouse**: the whole venue from outside with the roof off, with buttons on each
+     area and published block.
+   - **Plan**: a top-down plan you can drag and zoom.
+   - **Measure**: tap two points (seats, the stage, the ring, markings or rails) for the
+     straight-line distance in metres (modelled).
+   - **Photo**: holds still and refines the picture into a clean, large still to save.
+   - **Real venue**: Google's live 3D map of the building (see below).
+   "Compare with a standard ticket" shows hospitality and a standard seat side by side.
 3. **Is Hospitality Worth It?** (`#vip-worth`). Type a standard ticket price and the package
    price you have been quoted, tick what the package includes, and say what each part is
    worth to you. It gives a verdict per person and for the group, a chart and a breakdown.
@@ -63,6 +85,12 @@ Each tool has its own address, so old links from the first prototype still work
    is worth and how many you expect to sign. It shows the return, how many clients must sign
    to break even, cautious and bold scenarios, and builds a one-page business case to print,
    save as PDF or copy as text.
+6. **Venue Guide** (`#venue-guide`, reads `venue`, `mode` and `day`). One page per venue:
+   what it stages, its shape and levels, how blocks, rows and boxes are numbered, access
+   notes, the hospitality products with where they sit, and our website pages for it. Every
+   figure carries its label and a plain-words source, and example seats use the same code as
+   the seat map, so the two always agree. Dated event pages drop off the day after the event.
+   Print prints only the guide.
 
 Every result ends with the same four actions: Add to my brief, Share result, a next step,
 and Speak to a specialist. "My brief" (top right) collects results; from there you can copy
@@ -80,10 +108,16 @@ the model shows instead.
   until a Google key is added (see below). Until then it shows a calm "Live 3D map not set
   up yet" card. If Google refuses or cannot be reached, it shows "The live map could not
   load". Seat view and Overview keep working either way.
-- **Real 360 photos.** When a seating area has a photo, Seat view opens on it. You drag
-  to look around, and a "360 photo / 3D model" switch sits under the picture. The credit
-  line reads "Photo: <who took it>, <date>". Areas without a photo show the 3D model with
-  the note "Real 360 photo from this area coming soon."
+- **Real captures.** When a seating area has a real capture, Seat view opens on it, with a
+  "Real capture / 3D model" switch under the picture. Three kinds can be listed in
+  `js/data/captures.js` (it ships empty; its header explains each field):
+  - a 360 photo (the steps below; entries in the older `js/data/panoramas.js` still work),
+  - a Gaussian splat scan (`.spz`, `.ply`, `.splat` or `.ksplat`, for example from a phone
+    scanning app), shown with the GaussianSplats3D library, version 0.4.7, which loads
+    from cdn.jsdelivr.net only when such an entry is opened,
+  - a Matterport tour of a hospitality lounge, by its model id.
+  The credit line reads "Photo: <who took it>, <date>" (or "Capture: ..."). Areas without
+  one show the 3D model with the note "Real 360 photo from this area coming soon."
 
 ### How to add a 360 photo of a seat
 
@@ -103,18 +137,18 @@ the model shows instead.
    On phones, anything wider than 4096 pixels is scaled down automatically.
 4. **Name and place the file.** Put it in `assets/360/<venue id>/<area id>.jpg`, using
    the ids from `js/data/venues.js`. Use lower case with hyphens. For example:
-   `assets/360/tottenham-hotspur-stadium/premium-lounge.jpg`
+   `assets/360/tottenham-hotspur-stadium/tunnel-club.jpg`
    - Venue ids: `tottenham-hotspur-stadium`, `the-arena-london`, `ao-arena`, `co-op-live`,
      `royal-albert-hall`, `ascot-racecourse`, `cheltenham-racecourse`.
-   - Area ids: stadium `private-box`, `premium-lounge`, `pitchside`, `upper-tier`;
-     arena `private-suite`, `premium-lower`, `floor`, `upper-tier`; hall `private-box`,
-     `stalls`, `circle`, `gallery`; racecourse `private-box`, `restaurant`,
-     `premier-enclosure`, `lawn`.
+   - Area ids are the real products and seating areas listed for each venue in
+     `VENUE_AREAS` in `js/data/venues.js`, for example `tunnel-club`, `club-101`,
+     `beautiful-north`, `gallery-suites`, `grand-tier-box`, `the-vista`,
+     `cleeve-view-boxes`. The area id also appears in the address bar as `area=`.
 5. **Add an entry** to `js/data/panoramas.js`, inside the `PANORAMAS = { ... }` braces:
 
    ```js
-   'tottenham-hotspur-stadium/premium-lounge': {
-     src: 'assets/360/tottenham-hotspur-stadium/premium-lounge.jpg',
+   'tottenham-hotspur-stadium/tunnel-club': {
+     src: 'assets/360/tottenham-hotspur-stadium/tunnel-club.jpg',
      credit: 'Prestige Corporate Events',
      takenOn: '14/03/2027',
      permission: 'Taken by Steve Hill on a site visit, venue agreed by email 01/03/2027',
@@ -175,15 +209,19 @@ Map labels are switched off, so the building is not labelled with any brand name
 ## What is illustrative
 
 - **3D views are illustrative models**, not exact renderings of any venue. The viewer says so
-  on screen at all times. Venue names pick the venue type; the buildings are generic.
-- **Scores** (view, sound, comfort, atmosphere, networking) and match percentages are
-  indicative opinions for comparison, and are labelled "Indicative".
-- **No prices from Prestige Corporate Events appear anywhere.** The calculators use figures the
-  visitor types. "Try example figures" fills in made-up numbers, labelled on screen as
-  illustrative and not quotes. The "worth to you" amounts for each inclusion are example
-  assumptions the visitor can change.
-- The enquiry form, newsletter sign-up and brief are prototypes: they show a success message
-  but send nothing.
+  on screen at all times. Each venue is built at true scale from published figures (marked
+  stated), UK and FIFA design guidance (design standard) and our own geometry (modelled);
+  "How this model was built" on the page lists which is which, with the source in words.
+- **No scores.** The viewer and Where Should I Sit? show no opinion scores. The Occasion
+  Matchmaker orders event types by our own judgement, which it never presents as a fact.
+- **No prices from Prestige Corporate Events appear anywhere.** The calculators use only
+  figures the visitor types. They start empty, with no example figures and no £ placeholders,
+  and the "worth to you" amounts for each inclusion also start empty.
+- **Nothing is sent.** The enquiry and "My brief" copy the visitor's brief and open the
+  matching page on prestigecorporateevents.com in a new tab, or show 0333 305 5377 to call.
+  They never say anything was sent. The newsletter sign-up is a prototype and sends nothing.
+- **Status labels.** Block numbers from an access survey (AccessAble) are labelled measured,
+  numbers the venue publishes are labelled stated, and every other number is ours (modelled).
 
 ## Known limits
 
@@ -193,7 +231,10 @@ Map labels are switched off, so the building is not labelled with any brand name
   slowly. Speed and touch control (drag, pinch) still need testing on a real phone and a
   normal laptop graphics card.
 - People in the crowd look blocky at middle distance.
-- "Save this view" gives a picture the size of the on-screen viewer, not a large print file.
+- "Save this view" gives a picture the size of the on-screen viewer. For a larger, cleaner
+  still use Photo, which saves at up to twice the viewer size (4096 pixels at most).
+- The splat scan and Matterport paths were tested only with a small test scene and an
+  empty manifest; try a real scan and a real tour before relying on them.
 - The brief is stored in the visitor's browser only. Clearing site data, or a different
   browser or device, starts an empty brief.
 - The calculators cap very large figures (for example £1,000,000 for a ticket or package)

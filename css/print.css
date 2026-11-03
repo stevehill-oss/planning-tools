@@ -12,6 +12,28 @@ body { background: #fff !important; color: #000; font-size: 11pt; }
 html.reveal-ready [data-reveal] { opacity: 1 !important; transform: none !important; }
 a { color: #000; }
 
+/* Venue guide print (from "Print this venue" in the Venue Guide): only the guide panel. */
+html.printing-guide body > *:not(main) { display: none !important; }
+html.printing-guide main > *:not(.tools-section) { display: none !important; }
+html.printing-guide .tools-section__head, html.printing-guide .tabbar,
+html.printing-guide .tool-panel:not([data-tool="venue-guide"]),
+html.printing-guide .vg-picker, html.printing-guide .vg-nav, html.printing-guide .vg-actions,
+html.printing-guide .vg-cta-row, html.printing-guide .vg-product__links, html.printing-guide .vg-level__links,
+html.printing-guide .vg-filter, html.printing-guide .vg-event .btn { display: none !important; }
+html.printing-guide .tool-panel[data-tool="venue-guide"] { display: block !important; }
+html.printing-guide .tools-section { padding: 0 !important; background: #fff !important; }
+.vg .card, .vg-event { box-shadow: none !important; border: 1px solid #ccc !important; background: #fff !important; }
+.vg-sec { break-inside: auto; margin-bottom: 8mm !important; }
+.vg-product, .vg-level, .vg-card, .vg-fact, .vg-event { break-inside: avoid; }
+.vg-products, .vg-levels { grid-template-columns: 1fr 1fr !important; gap: 4mm !important; }
+.vg-glance, .vg-two { grid-template-columns: 1fr 1fr !important; }
+.vg-venue-name { font-size: 20pt !important; }
+.vg-sec > h3 { font-size: 14pt !important; border-bottom: 1px solid #8A6426; padding-bottom: 2mm; }
+.vg-tag { border: 1px solid #999; background: #fff !important; color: #000 !important; }
+.vg-legend { color: #000 !important; }
+.vg a[href^="https://prestigecorporateevents.com"]::after { content: " (prestigecorporateevents.com" attr(data-out-path) ")"; font-size: 8pt; color: #555; }
+.vg .skeleton { display: none !important; }
+
 /* Brief-only print */
 html.printing-brief body > *:not(.print-brief) { display: none !important; }
 html.printing-brief .print-brief { display: block !important; }

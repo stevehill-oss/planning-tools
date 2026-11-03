@@ -237,3 +237,7 @@
   .roi-doc__steps { gap: 0.5mm; }
   .roi-doc__foot { margin-top: 5mm; padding-top: 2.5mm; break-inside: avoid; }
 }
+
+/* Next step on our website (02/11/2026). */
+.roi-site { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3); }
+.roi-site__lead { margin: 0; flex: 1 1 220px; font-weight: 600; }

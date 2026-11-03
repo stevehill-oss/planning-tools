@@ -10,7 +10,8 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { rowY, rowD, seatD, tierBackD } from './layouts.js';
+import { rowY, rowD, tierBackD, tierSlots } from './layouts.js';
+import { CHAIRS } from '../data/seatmaps.js';
 import { rng } from './textures.js';
 
 /* ---------- Sweep ---------- */
@@ -122,16 +123,16 @@ export function bandFromRuns(runs) {
 
 // Builds the concrete of one tier plus its seat slots and distant-seat band.
 // opts: {
-//   radials       aisle radial lines from ring.radials()
+//   radials       aisle radial lines ({ i, f } list, or a function of the row index); pass
+//                 layouts.tierBuildOpts(L, tierId) so the seats match the seat map exactly
 //   frontBase     y of the bottom of the front wall (default 0)
 //   backWall      height of the wall behind the last row
 //   vom           { every: n (aisles), rows: [r0, r1], straightOnly: true } or null
-//   seatColor(slot) -> [r,g,b]   padded(slot) -> bool   keepSeat(slot) -> bool
+//   seatColor(slot) -> [r,g,b]   padded(slot) -> bool   arms(slot) -> bool
 //   seed
 // }
 export function buildTier(ring, t, opts = {}) {
   const R = rng(opts.seed || 3);
-  const radials = opts.radials || ring.radials();
   const frontBase = opts.frontBase ?? 0;
   const N = t.rows;
 
@@ -144,97 +145,34 @@ export function buildTier(ring, t, opts = {}) {
   }
   if (opts.backWall) { prof.push([tierBackD(t), rowY(t, N - 1) + opts.backWall]); shades.push(0.5); }
   const concrete = sweep(ring, prof, { samples: opts.samples, shade: shades, color: opts.concreteColor || [0.74, 0.74, 0.72], uScale: 3, vScale: 3 });
-  // opts.allow(point) limits seats, steps and vomitories to part of the ring (pair it with
-  // opts.samples so the concrete stops in the same place).
-  const allow = opts.allow || null;
-  const splitAllowed = (a0, a1, dS) => {
-    const out = []; let cur = null;
-    for (let s = a0; s < a1 - 1e-6; s += 0.5) {
-      const m = Math.min(s + 0.5, a1);
-      if (allow(ring.at((s + m) / 2, dS))) { if (cur) cur[1] = m; else cur = [s, m]; } else if (cur) { out.push(cur); cur = null; }
-    }
-    if (cur) out.push(cur);
-    return out;
-  };
-
-  // Aisle positions per row, and vomitory positions.
-  const voms = [];
-  if (opts.vom) {
-    radials.forEach((r, k) => {
-      if (k % opts.vom.every !== Math.floor(opts.vom.every / 2)) return;
-      if (opts.vom.straightOnly !== false && r.i % 2 === 1) return;
-      if (allow && !allow(ring.point(r.i, r.f, t.d0))) return;
-      if (opts.vom.allow && !opts.vom.allow(ring.point(r.i, r.f, t.d0))) return;
-      voms.push(r);
-    });
-  }
-
-  const slots = [];
+  // Seats, aisle half-steps and vomitories come from layouts.tierSlots(), the same function
+  // the seat map uses, so a seat picked on the map is a seat in this bowl. opts.allow(point)
+  // limits them to part of the ring (pair it with opts.samples so the concrete stops there).
+  const gen = tierSlots(ring, t, { radials: opts.radials, vom: opts.vom, allow: opts.allow });
+  const { slots, steps } = gen;
+  const voms = gen.voms;
   const band = { pos: [], uv: [], col: [], idx: [] };
-  const steps = [];
-  const W = 0.5; const AISLE = 1.15;
-  for (let i = 0; i < N; i++) {
-    const dS = seatD(t, i); const y = rowY(t, i);
-    const sList = radials.map((r) => ring.sOf(r.i, r.f, dS));
-    const Ltot = ring.length(dS);
-    const vomS = voms.map((r) => ring.sOf(r.i, r.f, dS));
-    const inVomRow = opts.vom && i >= opts.vom.rows[0] && i <= opts.vom.rows[1];
-    const rowTint = 0.94 + R() * 0.1;
-    for (let a = 0; a < sList.length; a++) {
-      let s0 = sList[a] + AISLE / 2;
-      let s1 = (a + 1 < sList.length ? sList[a + 1] : sList[0] + Ltot) - AISLE / 2;
-      if (s1 - s0 < W) continue;
-      // Half-step in the aisle at the start of this block (between rows).
-      if (i < N - 1) {
-        const p = ring.at(sList[a], rowD(t, i) + t.depth * 0.75);
-        if (!allow || allow(p)) steps.push({ x: p.x, z: p.z, y0: y, y1: y + (rowY(t, i + 1) - y) / 2, d: t.depth * 0.5, nx: p.nx, nz: p.nz });
-      }
-      // Seats in this block, split around any vomitory.
-      let pieces = [[s0, s1]];
-      if (allow) pieces = splitAllowed(s0, s1, dS);
-      if (inVomRow) {
-        vomS.forEach((vs) => {
-          for (let q = pieces.length - 1; q >= 0; q--) {
-            const [a0, a1] = pieces[q];
-            const v0 = vs - 1.35; const v1 = vs + 1.35;
-            if (v1 <= a0 || v0 >= a1) continue;
-            pieces.splice(q, 1);
-            if (v0 - a0 > W) pieces.push([a0, v0]);
-            if (a1 - v1 > W) pieces.push([v1, a1]);
-          }
-        });
-      }
-      pieces.forEach(([p0, p1]) => {
-        const n = Math.floor((p1 - p0) / W);
-        if (n < 1) return;
-        const w = (p1 - p0) / n;
-        const first = slots.length;
-        for (let k = 0; k < n; k++) {
-          const s = p0 + (k + 0.5) * w;
-          const p = ring.at(s, dS);
-          const slot = { x: p.x, y, z: p.z, nx: p.nx, nz: p.nz, row: i, tier: t.id, s, angle: Math.atan2(p.z, p.x), w };
-          slot.padded = opts.padded ? !!opts.padded(slot) : false;
-          if (opts.keepSeat && !opts.keepSeat(slot)) continue;
-          slot.color = (opts.seatColor ? opts.seatColor(slot) : [0.11, 0.15, 0.26]).map((v) => v * rowTint);
-          slots.push(slot);
-        }
-        if (slots.length === first) return;
-        // Band card for this piece: slanted from the front of the pan to the top of the back.
-        const c = slots[first].color;
-        const steps2 = Math.max(1, Math.ceil((p1 - p0) / 2.5));
-        const vb = band.pos.length / 3;
-        for (let k = 0; k <= steps2; k++) {
-          const s = p0 + (p1 - p0) * (k / steps2);
-          const pf = ring.at(s, dS - 0.2); const pb = ring.at(s, dS + 0.2);
-          band.pos.push(pf.x, y + 0.42, pf.z, pb.x, y + 0.92, pb.z);
-          const u = (s - p0) / w;
-          band.uv.push(u, 0, u, 1);
-          band.col.push(...c, ...c);
-          if (k < steps2) { const a0 = vb + k * 2; band.idx.push(a0, a0 + 2, a0 + 1, a0 + 1, a0 + 2, a0 + 3); }
-        }
-      });
+  const tints = []; for (let i = 0; i < N; i++) tints.push(0.94 + R() * 0.1);
+  slots.forEach((slot) => {
+    slot.padded = opts.padded ? !!opts.padded(slot) : false;
+    slot.arms = opts.arms ? !!opts.arms(slot) : false;
+    slot.color = (opts.seatColor ? opts.seatColor(slot) : [0.11, 0.15, 0.26]).map((v) => v * tints[slot.row]);
+  });
+  gen.pieces.forEach(({ p0, p1, w, first, dS, y }) => {
+    // Band card for this run of seats: slanted from the front of the pan to the top of the back.
+    const c = slots[first].color;
+    const steps2 = Math.max(1, Math.ceil((p1 - p0) / 2.5));
+    const vb = band.pos.length / 3;
+    for (let k = 0; k <= steps2; k++) {
+      const s = p0 + (p1 - p0) * (k / steps2);
+      const pf = ring.at(s, dS - 0.2); const pb = ring.at(s, dS + 0.2);
+      band.pos.push(pf.x, y + 0.42, pf.z, pb.x, y + 0.92, pb.z);
+      const u = (s - p0) / w;
+      band.uv.push(u, 0, u, 1);
+      band.col.push(...c, ...c);
+      if (k < steps2) { const a0 = vb + k * 2; band.idx.push(a0, a0 + 2, a0 + 1, a0 + 1, a0 + 2, a0 + 3); }
     }
-  }
+  });
 
   const bandGeo = new THREE.BufferGeometry();
   bandGeo.setAttribute('position', new THREE.Float32BufferAttribute(band.pos, 3));
@@ -243,7 +181,7 @@ export function buildTier(ring, t, opts = {}) {
   bandGeo.setIndex(band.idx);
   bandGeo.computeVertexNormals();
 
-  // Vomitory blocks: a concrete box with a dark tunnel mouth facing the pitch.
+  // Vomitory blocks: a concrete box with a dark tunnel mouth facing the action.
   const vomBlocks = [];
   if (opts.vom) {
     const [r0, r1] = opts.vom.rows;
@@ -312,20 +250,30 @@ export function vomMeshes(blocks, concreteMat, darkMat) {
 
 /* ---------- Seat field: near instanced seats + far band ---------- */
 
-function seatGeometry(padded) {
+// True-scale chairs (sizes in js/data/seatmaps.js CHAIRS, modelled): a tip-up seat with a
+// backrest, or a padded one; armrests only where the venue states them. Local +z faces the
+// action; the back of the backrest is at z = -depth / 2 + 0.03.
+function seatGeometry(padded, arms) {
+  const C = padded ? CHAIRS.padded : CHAIRS.standard; const W = C.width;
   const parts = [];
   if (padded) {
-    const pan = new RoundedBoxGeometry(0.5, 0.12, 0.46, 1, 0.04); pan.translate(0, 0.46, 0.02);
-    const back = new RoundedBoxGeometry(0.5, 0.56, 0.12, 1, 0.04); back.rotateX(-0.16); back.translate(0, 0.78, -0.22);
-    const armL = new RoundedBoxGeometry(0.06, 0.06, 0.4, 1, 0.02); armL.translate(-0.27, 0.66, 0);
-    const armR = armL.clone(); armR.translate(0.54, 0, 0);
-    parts.push(pan, back, armL, armR);
+    const pan = new RoundedBoxGeometry(W, 0.11, 0.44, 1, 0.04); pan.translate(0, C.panY - 0.05, 0.02);
+    const back = new RoundedBoxGeometry(W, C.backTop - C.panY, 0.11, 1, 0.04); back.rotateX(-0.16); back.translate(0, (C.panY + C.backTop) / 2, -0.18);
+    parts.push(pan, back);
   } else {
-    const pan = new RoundedBoxGeometry(0.44, 0.07, 0.4, 1, 0.025); pan.translate(0, 0.44, 0.03);
-    const back = new RoundedBoxGeometry(0.44, 0.42, 0.06, 1, 0.025); back.rotateX(-0.2); back.translate(0, 0.7, -0.17);
+    const pan = new RoundedBoxGeometry(W, 0.07, 0.4, 1, 0.025); pan.translate(0, C.panY - 0.03, 0.03);
+    const back = new RoundedBoxGeometry(W, C.backTop - C.panY, 0.06, 1, 0.025); back.rotateX(-0.2); back.translate(0, (C.panY + C.backTop) / 2, -0.15);
     parts.push(pan, back);
   }
-  const stem = new THREE.BoxGeometry(0.06, 0.4, 0.06); stem.translate(0, 0.2, -0.05);
+  if (arms) {
+    const a = CHAIRS.armW;
+    const armL = new RoundedBoxGeometry(a, 0.05, 0.38, 1, 0.02); armL.translate(-(W / 2 + a / 2 - 0.005), C.panY + 0.2, 0);
+    const postL = new THREE.BoxGeometry(a * 0.7, 0.2, 0.05); postL.translate(-(W / 2 + a / 2 - 0.005), C.panY + 0.1, -0.12);
+    const armR = armL.clone(); armR.translate(W + a - 0.01, 0, 0);
+    const postR = postL.clone(); postR.translate(W + a - 0.01, 0, 0);
+    parts.push(armL, armR, postL, postR);
+  }
+  const stem = new THREE.BoxGeometry(0.06, C.panY - 0.04, 0.06); stem.translate(0, (C.panY - 0.04) / 2, -0.05);
   parts.push(stem);
   // RoundedBoxGeometry is non-indexed; make everything non-indexed before merging.
   return mergeGeometries(parts.map((p) => (p.index ? p.toNonIndexed() : p)).map((p) => { p.deleteAttribute('uv'); return p; }));
@@ -353,16 +301,17 @@ export class SeatField {
     this.group.add(this.band);
 
     this.cap = nearCapacity;
-    const mk = (padded) => {
+    const mk = (padded, arms) => {
       const mat = new THREE.MeshStandardMaterial({ roughness: padded ? 0.75 : 0.45, metalness: 0.0 });
-      const mesh = new THREE.InstancedMesh(seatGeometry(padded), mat, nearCapacity);
+      const mesh = new THREE.InstancedMesh(seatGeometry(padded, arms), mat, nearCapacity);
       mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(nearCapacity * 3), 3);
       mesh.count = 0; mesh.frustumCulled = false; mesh.receiveShadow = true;
       this.group.add(mesh);
       return mesh;
     };
-    this.std = mk(false);
-    this.pad = mk(true);
+    // Four chair kinds: standard and padded, each with or without armrests.
+    this.meshes = [mk(false, false), mk(true, false), mk(false, true), mk(true, true)];
+    [this.std, this.pad] = this.meshes;
   }
 
   // Shows real seats within radius R of the viewer, the band elsewhere.
@@ -370,28 +319,27 @@ export class SeatField {
   setViewer(pos, R = 22, pos2 = null) {
     this.near.set(pos.x, pos.y, pos.z, R);
     if (pos2) this.near2.set(pos2.x, pos2.y, pos2.z, R); else this.near2.set(0, -9999, 0, 0);
-    let ns = 0; let np = 0;
+    const counts = [0, 0, 0, 0];
     const col = new THREE.Color();
     const R2 = R * R;
     const within = (s, p) => { const dx = s.x - p.x; const dy = (s.y + 0.6) - p.y; const dz = s.z - p.z; return dx * dx + dy * dy + dz * dz < R2; };
     for (const s of this.slots) {
       if (!within(s, pos) && !(pos2 && within(s, pos2))) continue;
-      const mesh = s.padded ? this.pad : this.std;
-      const k = s.padded ? np : ns;
+      const kind = (s.padded ? 1 : 0) + (s.arms ? 2 : 0);
+      const mesh = this.meshes[kind]; const k = counts[kind];
       if (k >= this.cap) continue;
       _p.set(s.x, s.y, s.z); _q.setFromAxisAngle(_up, yawFacing(-s.nx, -s.nz)); _s.set(1, 1, 1);
       _m.compose(_p, _q, _s); mesh.setMatrixAt(k, _m);
       col.setRGB(...(s.padded ? [s.color[0] * 0.9, s.color[1] * 0.9, s.color[2] * 0.9] : s.color));
       mesh.setColorAt(k, col);
-      if (s.padded) np++; else ns++;
+      counts[kind]++;
     }
-    this.std.count = ns; this.pad.count = np;
-    [this.std, this.pad].forEach((m) => { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; });
+    this.meshes.forEach((m, j) => { m.count = counts[j]; m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; });
   }
 
   dispose() {
     this.band.geometry.dispose(); this.bandMat.dispose();
-    [this.std, this.pad].forEach((m) => { m.geometry.dispose(); m.material.dispose(); m.dispose?.(); });
+    this.meshes.forEach((m) => { m.geometry.dispose(); m.material.dispose(); m.dispose?.(); });
   }
 }
 

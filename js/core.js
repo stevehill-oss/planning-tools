@@ -8,7 +8,8 @@ export const BRAND = {
   phoneHref: 'tel:+443333055377',
 };
 
-// Verified live on 27/10/2026 (each returned 200).
+// Verified live on 27/10/2026 and again on 02/11/2026 (each returned 200). Every other link
+// to our website comes from js/data/prestige-links.js, which adds the UTM tags.
 export const LINKS = {
   home: 'https://prestigecorporateevents.com/',
   sport: 'https://prestigecorporateevents.com/sport',
@@ -20,6 +21,7 @@ export const LINKS = {
 // Tool ids keep the hashes the original Replit prototype used, so old links still work.
 export const TOOLS = [
   { id: 'seat-finder', label: 'Where Should I Sit?', sub: 'Personalised seating', icon: 'pin', module: './tools/seat-finder.js' },
+  { id: 'venue-guide', label: 'Venue Guide', sub: 'Every venue, verified', icon: 'map', module: './tools/venue-guide.js' },
   { id: 'reality-viewer', label: 'Seat Reality Viewer', sub: 'Preview your view', icon: 'eye', module: './tools/seat-viewer.js' },
   { id: 'vip-worth', label: 'Is Hospitality Worth It?', sub: 'Weigh up the upgrade', icon: 'scale', module: './tools/vip-value.js' },
   { id: 'occasion-matchmaker', label: 'Occasion Matchmaker', sub: 'Find your kind of event', icon: 'heart', module: './tools/matchmaker.js' },
@@ -79,7 +81,8 @@ export function buildHash(toolId, params = {}) {
     Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '' && !(Array.isArray(v) && !v.length))
       .map(([k, v]) => [k, Array.isArray(v) ? v.join(',') : String(v)])
   );
-  const query = new URLSearchParams(clean).toString();
+  // Commas stay readable in shared links (URLSearchParams would write %2C).
+  const query = new URLSearchParams(clean).toString().replace(/%2C/g, ',');
   return `#${toolId}${query ? `?${query}` : ''}`;
 }
 
